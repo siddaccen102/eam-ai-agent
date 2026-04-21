@@ -125,6 +125,20 @@ eam-ai-agent/
 
 ---
 
+## 🔗 Integration Contracts
+
+The implementation boundary for Workday and HxGN EAM integrations is documented in:
+
+- `docs/integration-contracts.md`
+
+Use this as the source of truth for:
+
+- minimum endpoint set
+- canonical internal DTOs
+- standard integration error contract
+
+---
+
 ## 🔐 Environment Variables
 
 Create a `.env` file in `backend`:
