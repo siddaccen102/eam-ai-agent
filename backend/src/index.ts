@@ -1,9 +1,9 @@
 import express from "express";
-import "dotenv/config";
+import { env } from "./config/env";
 
 const app = express()
 
-const PORT = Number(process.env.PORT)
+const PORT = Number(env.PORT)
 
 // app.use(path)
 
@@ -11,8 +11,8 @@ app.get("/health", (req, res) => {
     res.send({
         "status": "ok",
         "service": "backend",
-        "timestamp": new Date()
+        "timestamp": new Date().toISOString()
     })
 })
 
-app.listen(PORT, () => console.log(`Server running on PORT: ${PORT}...`))
+app.listen(env.PORT, () => console.log(`Server running on PORT: ${PORT}...`))
