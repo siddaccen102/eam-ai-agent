@@ -93,7 +93,7 @@ function buildClient(): AxiosInstance {
 export const workdayClient: AxiosInstance = buildClient()
 
 // getWorkdayClient helper - instead of lettings routes call workdayClient.get() directly
-export async function getWorkdayClient<T = unknown>(
+export async function getWorkday<T = unknown>(
     path: string, 
     params?: Record<string, unknown>
 ): Promise<T> {

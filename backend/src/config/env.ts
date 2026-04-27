@@ -11,6 +11,7 @@ const envSchema = z.object({
     EAM_BASE_URL: z.string().url(),
     EAM_API_TOKEN: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1),
+    WORKDAY_MODE: z.enum(["mock", "live"]).default("mock")
 });
 
 const parsed = envSchema.safeParse(process.env);
