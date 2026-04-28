@@ -50,7 +50,7 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
 
     return new IntegrationError({
         code: mapStatusToIntegrationCode(status),
-        message: status ? `EAM request failed with status ${status}` : `EAM request failed.`,
+        message: status ? `EAM request failed with status ${status}` : `EAM request failed`,
         correlationId,
         details
     })
@@ -61,10 +61,16 @@ function buildClient(): AxiosInstance {
     const instance = axios.create({
         baseURL: env.EAM_BASE_URL,
         timeout: EAM_DEFAULT_TIMEOUT_MS,
+        auth: {
+            username: env.EAM_USERNAME,
+            password: env.EAM_PASSWORD
+        },
         headers: {
-            Authorization: `Bearer ${env.EAM_API_TOKEN}`,
             Accept: "application/json",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            tenant: env.EAM_TENANT,
+            role: env.EAM_ROLE,
+            organization: env.EAM_ORGANIZATION
         }
     })
 
@@ -104,6 +110,11 @@ function buildClient(): AxiosInstance {
 }
 
 export const eamClient: AxiosInstance = buildClient()
+
+console.log(
+    `[eam] adapter ready — base=${env.EAM_BASE_URL}  tenant=${env.EAM_TENANT}  org=${env.EAM_ORGANIZATION}  user=${env.EAM_USERNAME.slice(0, 2)}${"*".repeat(Math.max(0, env.EAM_USERNAME.length - 2))}`
+)
+
 
 // getEam helper - GET wrapper that returns response.data so routes don't unwrap manually
 export async function getEam<T = unknown>(
