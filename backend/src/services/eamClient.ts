@@ -1,19 +1,19 @@
 // all imports will go here
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios"
-import { randomUUID } from "node:crypto"
 import { env } from "../config/env"
 import {
     IntegrationError,
     IntegrationErrorDetails,
     mapStatusToIntegrationCode
 } from "../errors/integrationError"
+import { randomUUID } from "node:crypto"
 
 // all constants used
-const WORKDAY_DEFAULT_TIMEOUT_MS = 10_000
+const EAM_DEFAULT_TIMEOUT_MS = 15_000
 const CORRELATION_HEADER = "x-correlation-id"
-const PROVIDER = "workday" as const
+const PROVIDER = "eam" as const
 
-// Helper A - to pull message out of whatever Workday returned
+// Helper A - to pull message out of whatever EAM returned
 function extractUpstreamMessage(data: unknown): string | undefined {
     if (!data || typeof data !== "object") return undefined
     const record = data as Record<string, unknown>
@@ -36,7 +36,7 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
     if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
         return new IntegrationError({
             code: "UPSTREAM_TIMEOUT",
-            message: "Workday request timed out.",
+            message: "EAM request timed out",
             correlationId,
             details: { provider: PROVIDER }
         })
@@ -50,7 +50,7 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
 
     return new IntegrationError({
         code: mapStatusToIntegrationCode(status),
-        message: status ? `Workday request failed with status ${status}` : `Workday request failed.`,
+        message: status ? `EAM request failed with status ${status}` : `EAM request failed.`,
         correlationId,
         details
     })
@@ -59,11 +59,12 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
 // build and export the client
 function buildClient(): AxiosInstance {
     const instance = axios.create({
-        baseURL: env.WORKDAY_BASE_URL,
-        timeout: WORKDAY_DEFAULT_TIMEOUT_MS,
+        baseURL: env.EAM_BASE_URL,
+        timeout: EAM_DEFAULT_TIMEOUT_MS,
         headers: {
-            Authorization: `Bearer ${env.WORKDAY_API_TOKEN}`,
-            Accept: "application/json"
+            Authorization: `Bearer ${env.EAM_API_TOKEN}`,
+            Accept: "application/json",
+            "Content-Type": "application/json"
         }
     })
 
@@ -75,28 +76,31 @@ function buildClient(): AxiosInstance {
         }
 
         // logger for every upcoming request
-        const cid = config.headers.get(CORRELATION_HEADER)
-        console.log(`[${PROVIDER}] ${config.method?.toUpperCase()} ${config.url} cid=${cid}`)
+        const cid = config.headers.get(CORRELATION_HEADER);
+        console.log(`[${PROVIDER}] ${config.method?.toUpperCase()} ${config.url} cid=${cid}`);
+
+        (config as any).metadata = {
+            startedAt: Date.now(),
+        }
 
         return config
     })
 
     // response axios interceptor
     instance.interceptors.response.use(
-        (response) => response,
+        (response) => {
+            const startedAt = (response.config as any).metadata?.startedAt as number | undefined
+            if (startedAt) {
+                const ms = Date.now() - startedAt
+                const cid = response.config.headers.get(CORRELATION_HEADER)
+                console.log(`[${PROVIDER}] ${response.config.method?.toUpperCase()} ${response.config.url} ${response.status} (${ms}ms) cid=${cid}`)
+            }
+            return response
+        },
         (error: AxiosError) => Promise.reject(normalizeAxiosError(error))
     )
 
     return instance
 }
 
-export const workdayClient: AxiosInstance = buildClient()
-
-// getWorkdayClient helper - instead of lettings routes call workdayClient.get() directly
-export async function getWorkday<T = unknown>(
-    path: string, 
-    params?: Record<string, unknown>
-): Promise<T> {
-    const res = await workdayClient.get<T>(path, { params })
-    return res.data
-}
+export const eamClient: AxiosInstance = buildClient()

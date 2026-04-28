@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express"
-import { getWorkdayClient } from "../services/workdayClient"
+import { getWorkday } from "../services/workdayClient"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -17,7 +17,7 @@ router.get("/smoke", async (req: Request, res: Response) => {
     }
 
     try {
-        const data = await getWorkdayClient("/people", { primaryWorkEmail: email })
+        const data = await getWorkday("/people", { primaryWorkEmail: email })
         return res.send({
             status: "ok",
             provider: "workday",
