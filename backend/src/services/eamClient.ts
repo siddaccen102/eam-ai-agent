@@ -104,3 +104,21 @@ function buildClient(): AxiosInstance {
 }
 
 export const eamClient: AxiosInstance = buildClient()
+
+// getEam helper - GET wrapper that returns response.data so routes don't unwrap manually
+export async function getEam<T = unknown>(
+    path: string, 
+    params?: Record<string, unknown>
+): Promise<T> {
+    const res = await eamClient.get<T>(path, { params })
+    return res.data
+}
+
+// postEam helper - POST wrapper with separate body (B) and response generics (T)
+export async function postEam<T = unknown, B = unknown>(
+    path: string,
+    body: B
+): Promise<T> {
+    const res = await eamClient.post<T>(path, body)
+    return res.data
+}
