@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express"
 import { getEamCollection } from "../services/eamClient"
+import { toEquipmentOption, EamAssetRaw } from "../services/eamMappers"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -8,20 +9,22 @@ import {
 const router = Router()
 
 // GET /smoke/assets[?<any-eam-supported-param>]
-// Returns clean { records, total, cursor, entityName } shape.
-// Upstream Result.ResultData envelope is unwrapped inside the adapter.
+// Returns canonical EquipmentOption[] - vendor-free, frontend-ready.
 router.get("/smoke/assets", async (req: Request, res: Response) => {
     try {
-        // unknown for the per-record type - narrowing is Mini 4.7's job
-        const result = await getEamCollection<unknown>(
+        const collection = await getEamCollection<EamAssetRaw>(
             "/assets",
             req.query as Record<string, unknown>
         )
+        const records = collection.records.map(toEquipmentOption)
         return res.send({
             status: "ok",
             provider: "eam",
             params: req.query,
-            ...result
+            records,
+            total: collection.total,
+            cursor: collection.cursor,
+            entityName: collection.entityName
         })
     } catch (err) {
         if (err instanceof IntegrationError) {
