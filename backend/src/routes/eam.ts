@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express"
-import { getEam } from "../services/eamClient"
+import { getEamCollection } from "../services/eamClient"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -8,16 +8,20 @@ import {
 const router = Router()
 
 // GET /smoke/assets[?<any-eam-supported-param>]
-// Pass-through to EAM /assets, returning raw EAM envelope
-// Real shape: { Result: { ResultData: { DATARECORD: [...] } } }
+// Returns clean { records, total, cursor, entityName } shape.
+// Upstream Result.ResultData envelope is unwrapped inside the adapter.
 router.get("/smoke/assets", async (req: Request, res: Response) => {
     try {
-        const data = await getEam("/assets", req.query as Record<string, unknown>)
+        // unknown for the per-record type - narrowing is Mini 4.7's job
+        const result = await getEamCollection<unknown>(
+            "/assets",
+            req.query as Record<string, unknown>
+        )
         return res.send({
             status: "ok",
             provider: "eam",
             params: req.query,
-            data
+            ...result
         })
     } catch (err) {
         if (err instanceof IntegrationError) {

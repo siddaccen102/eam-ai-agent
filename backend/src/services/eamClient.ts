@@ -13,6 +13,31 @@ const EAM_DEFAULT_TIMEOUT_MS = 15_000
 const CORRELATION_HEADER = "x-correlation-id"
 const PROVIDER = "eam" as const
 
+// Internal envelope shape - nothing outside this file should know it exists
+type EamCollectionResponse<T> = {
+    Result: {
+        SessionID: string | null
+        ResultData: {
+            DATAENTITYNAME: string
+            CURRENTCURSORPOSITION: number
+            NEXTCURSORPOSITION: number
+            RECORDS: number
+            DATARECORD: T[]
+        }
+    }
+}
+
+// What the rest of the app consumes. Clean domain language.
+export type EamCollection<T> = {
+    records: T[]
+    total: number
+    cursor: {
+        current: number
+        next: number
+    }
+    entityName: string
+}
+
 // Helper A - to pull message out of whatever EAM returned
 function extractUpstreamMessage(data: unknown): string | undefined {
     if (!data || typeof data !== "object") return undefined
@@ -132,4 +157,34 @@ export async function postEam<T = unknown, B = unknown>(
 ): Promise<T> {
     const res = await eamClient.post<T>(path, body)
     return res.data
+}
+
+// getEamCollection - GET wrapper that unwraps EAM's Result.ResultData envelope.
+// Returns clean { records, total, cursor, entityName } regardless of upstream quirks.
+export async function getEamCollection<T = unknown>(
+    path: string,
+    params?: Record<string, unknown>
+): Promise<EamCollection<T>> {
+    const raw = await getEam<EamCollectionResponse<T>>(path, params)
+
+    // Defensive: throw a contract error if EAM returns a malformed envelope.
+    if (!raw?.Result?.ResultData?.DATARECORD) {
+        throw new IntegrationError({
+            code: "CONTRACT_MAPPING_ERROR",
+            message: "EAM response missing Result.ResultData.DATARECORD",
+            correlationId: randomUUID(),
+            details: { provider: PROVIDER }
+        })
+    }
+
+    const rd = raw.Result.ResultData
+    return {
+        records: rd.DATARECORD,
+        total: rd.RECORDS,
+        cursor: {
+            current: rd.CURRENTCURSORPOSITION,
+            next: rd.NEXTCURSORPOSITION
+        },
+        entityName: rd.DATAENTITYNAME
+    }
 }
