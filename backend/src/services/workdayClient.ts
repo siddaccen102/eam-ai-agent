@@ -7,6 +7,8 @@ import {
     IntegrationErrorDetails,
     mapStatusToIntegrationCode
 } from "../errors/integrationError"
+import { ValidatedUser } from "../types/canonical"
+import { mockGetWorkdayUserByEmail } from "./workdayMock"
 
 // all constants used
 const WORKDAY_DEFAULT_TIMEOUT_MS = 10_000
@@ -94,9 +96,39 @@ export const workdayClient: AxiosInstance = buildClient()
 
 // getWorkdayClient helper - instead of lettings routes call workdayClient.get() directly
 export async function getWorkday<T = unknown>(
-    path: string, 
+    path: string,
     params?: Record<string, unknown>
 ): Promise<T> {
     const res = await workdayClient.get<T>(path, { params })
     return res.data
+}
+
+// Domain helper: returns a canonical ValidatedUser for an email.
+// Mock mode: returns canned data from workdayMock.
+// Live mode: not yet wired (awaiting OAuth/ISU credentials).
+// Throws USER_INACTIVE when the user is found but flagged inactive in upstream.
+export async function getWorkdayUserByEmail(email: string): Promise<ValidatedUser> {
+    let user: ValidatedUser
+
+    if (env.WORKDAY_MODE === "mock") {
+        user = await mockGetWorkdayUserByEmail(email)
+    } else {
+        throw new IntegrationError({
+            code: "CONTRACT_MAPPING_ERROR",
+            message: "Live Workday integration not yet implemented (awaiting credentials)",
+            correlationId: randomUUID(),
+            details: { provider: PROVIDER }
+        })
+    }
+
+    if (!user.isActive) {
+        throw new IntegrationError({
+            code: "USER_INACTIVE",
+            message: `Workday user ${user.email} is inactive`,
+            correlationId: randomUUID(),
+            details: { provider: PROVIDER, userId: user.userId }
+        })
+    }
+
+    return user
 }

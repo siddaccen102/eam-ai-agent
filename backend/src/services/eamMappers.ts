@@ -1,4 +1,4 @@
-import { EquipmentOption } from "../types/canonical"
+import { EquipmentOption, OrganizationOption } from "../types/canonical"
 
 // Raw EAM asset shape. We only model the fields we use.
 // EAM returns ~100 other fields per record - mostly null - which we deliberately ignore.
@@ -25,6 +25,17 @@ export type EamAssetRaw = {
     OUTOFSERVICE: "true" | "false" | null
 }
 
+// EAM /organization wraps the actual code+description inside an ORGANIZATIONID
+// object - same pattern as ASSETID.ORGANIZATIONID on asset records.
+// We only model the fields we use; everything else (currency, locale, UDFs, ...)
+// is intentionally ignored.
+export type EamOrganizationRaw = {
+    ORGANIZATIONID: {
+        ORGANIZATIONCODE: string
+        DESCRIPTION: string | null
+    }
+}
+
 // toEquipmentOption - pure mapping from raw EAM asset to canonical DTO.
 // No I/O, no side effects. Testable in isolation.
 export function toEquipmentOption(asset: EamAssetRaw): EquipmentOption {
@@ -34,5 +45,16 @@ export function toEquipmentOption(asset: EamAssetRaw): EquipmentOption {
         equipmentClass: asset.CLASSID?.CLASSCODE ?? undefined,
         locationCode: asset.DEPARTMENTID?.DEPARTMENTCODE ?? undefined,
         isActive: asset.INPRODUCTION === "true" && asset.OUTOFSERVICE === "false"
+    }
+}
+
+// toOrganizationOption - pure mapping from raw EAM organization to canonical DTO.
+// description falls back to code if upstream returns null - so the AI matcher
+// never sees an empty string.
+export function toOrganizationOption(raw: EamOrganizationRaw): OrganizationOption {
+    const id = raw.ORGANIZATIONID
+    return {
+        code: id.ORGANIZATIONCODE,
+        description: id.DESCRIPTION ?? id.ORGANIZATIONCODE,
     }
 }

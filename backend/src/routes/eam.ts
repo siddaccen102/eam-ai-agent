@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express"
-import { getEamCollection } from "../services/eamClient"
+import { getEamCollection, getEamOrganizations } from "../services/eamClient"
 import { toEquipmentOption, EamAssetRaw } from "../services/eamMappers"
 import {
     IntegrationError,
@@ -34,6 +34,28 @@ router.get("/smoke/assets", async (req: Request, res: Response) => {
         return res.status(500).send({
             code: "INTERNAL_ERROR",
             message: "Unexpected error during EAM assets smoke test"
+        })
+    }
+})
+
+
+// GET /smoke/organizations
+// Returns the canonical EAM organization list - vendor-free, AI-matcher-ready
+router.get("/smoke/organizations", async (req: Request, res: Response) =>{
+    try {
+        const result = await getEamOrganizations()
+        return res.send({
+            status: "ok",
+            provider: "eam",
+            ...result
+        })
+    } catch (err) {
+        if (err instanceof IntegrationError) {
+            return res.status(integrationErrorHttpStatus(err)).send(err.toJSON())
+        }
+        return res.status(500).send({
+            code: "INTERNAL_ERROR",
+            message: "Unexpected error during EAM organization smoke test"
         })
     }
 })

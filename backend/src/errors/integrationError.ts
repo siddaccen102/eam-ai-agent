@@ -1,11 +1,12 @@
 // Step 1 - Define which error code exist
-export type IntegrationErrorCode = 
+export type IntegrationErrorCode =
     | "UPSTREAM_AUTH_FAILED"    // 401 from upstream
     | "UPSTREAM_FORBIDDEN"      // 403
     | "RESOURCE_NOT_FOUND"      // 404
     | "UPSTREAM_TIMEOUT"        // network timeout
     | "UPSTREAM_SERVICE_ERROR"  // 5xx or unknown
     | "CONTRACT_MAPPING_ERROR"  // we got a response but it didn't match what we expected
+    | "USER_INACTIVE"           // workday user found but flagged inactive
 
 
 // Step 2 - Define which provider exist
@@ -65,6 +66,7 @@ export function integrationErrorHttpStatus(err: IntegrationError): number {
     if (err.code === "UPSTREAM_TIMEOUT") return 504         // Gateway timeout
     if (err.code === "RESOURCE_NOT_FOUND") return 404       // pass-through is fine here
     if (err.code === "CONTRACT_MAPPING_ERROR") return 500   // our bug, not upstream's
+    if (err.code === "USER_INACTIVE") return 403            // user exists but is not allowed
 
     return 502
 }

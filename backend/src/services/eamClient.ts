@@ -7,6 +7,8 @@ import {
     mapStatusToIntegrationCode
 } from "../errors/integrationError"
 import { randomUUID } from "node:crypto"
+import { OrganizationOption } from "../types/canonical"
+import { EamOrganizationRaw, toOrganizationOption } from "./eamMappers"
 
 // all constants used
 const EAM_DEFAULT_TIMEOUT_MS = 15_000
@@ -186,5 +188,21 @@ export async function getEamCollection<T = unknown>(
             next: rd.NEXTCURSORPOSITION
         },
         entityName: rd.DATAENTITYNAME
+    }
+}
+
+// getEamOrganization - fetches EAM Orgs and return the canonical list
+export async function getEamOrganizations(): Promise<
+    {
+        records: OrganizationOption[]
+        total: number
+        cursor: { current: number, next: number }
+    }
+> {
+    const collection = await getEamCollection<EamOrganizationRaw>("/organization")
+    return {
+        records: collection.records.map(toOrganizationOption),
+        total: collection.total,
+        cursor: collection.cursor
     }
 }
