@@ -191,18 +191,34 @@ export async function getEamCollection<T = unknown>(
     }
 }
 
-// getEamOrganization - fetches EAM Orgs and return the canonical list
-export async function getEamOrganizations(): Promise<
-    {
-        records: OrganizationOption[]
-        total: number
-        cursor: { current: number, next: number }
+// getEamOrganizations - fetches the EAM organization list and returns canonical DTOs.
+//
+// LIMITATION: HxGN EAM REST GET /organization caps responses at 50 records per call
+// and does NOT honor cursor / limit / pageSize / offset / start params via GET (verified
+// against the dev tenant). EAM's pagination model for this endpoint likely requires a
+// POST search envelope which we have not yet integrated.
+//
+// The response includes `total` so callers know whether records are truncated. If
+// total > records.length, downstream consumers (e.g. the AI matcher) should treat the
+// match space as "first 50 only" until a paged version of this helper lands.
+export async function getEamOrganizations(): Promise<{
+    records: OrganizationOption[]
+    total: number
+    truncated: boolean
+}> {
+    const page = await getEamCollection<EamOrganizationRaw>("/organization")
+    const records = page.records.map(toOrganizationOption)
+    const truncated = page.total > records.length
+
+    if (truncated) {
+        console.warn(
+            `[eam] /organization returned ${records.length} of ${page.total} - tail (${page.total - records.length} records) not visible to consumers; pagination follow-up required`
+        )
     }
-> {
-    const collection = await getEamCollection<EamOrganizationRaw>("/organization")
+
     return {
-        records: collection.records.map(toOrganizationOption),
-        total: collection.total,
-        cursor: collection.cursor
+        records,
+        total: page.total,
+        truncated,
     }
 }
