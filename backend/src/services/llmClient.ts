@@ -1,4 +1,6 @@
 import OpenAi from "openai"
+import { zodResponseFormat } from "openai/helpers/zod"
+import { z } from "zod"
 import { randomUUID } from "node:crypto"
 import { env } from "../config/env"
 import { IntegrationError, IntegrationErrorDetails } from "../errors/integrationError"
@@ -99,6 +101,48 @@ export async function chatComplete(
             })
         }
         return content
+    } catch (err) {
+        if (err instanceof IntegrationError) throw err
+        throw normalizeOpenAiError(err, correlationId)
+    }
+}
+
+// chatCompleteJson - structured-output variant. The LLM is forced to return
+// JSON matching the provided Zod schema. Validation happens at the SDK level;
+// we re-throw as IntegrationError if the response is null (refusal / schema mismatch).
+export async function chatCompleteJson<T>(
+    messages: ChatMessage[],
+    schema: z.ZodType<T>,
+    schemaName: string,
+    opts?: ChatCompleteOpts
+): Promise<T> {
+    const correlationId = randomUUID()
+    const model = opts?.model ?? env.OPENAI_MODEL
+    const startedAt = Date.now()
+
+    console.log(`[llm] chat-json schema=${schemaName} model=${model} cid=${correlationId}`)
+
+    try {
+        const completion = await openai.chat.completions.parse({
+            model,
+            messages: messages as OpenAi.Chat.ChatCompletionMessageParam[],
+            temperature: opts?.temperature ?? 0,
+            response_format: zodResponseFormat(schema, schemaName),
+        })
+        const ms = Date.now() - startedAt
+        const parsed = completion.choices[0]?.message?.parsed
+
+        console.log(`[llm] chat-json ${completion.usage?.total_tokens ?? "?"}tok (${ms}ms) cid=${correlationId}`)
+
+        if (parsed == null) {
+            throw new IntegrationError({
+                code: "CONTRACT_MAPPING_ERROR",
+                message: "LLM structured output returned null (refusal or schema mismatch)",
+                correlationId,
+                details: { provider: PROVIDER },
+            })
+        }
+        return parsed as T
     } catch (err) {
         if (err instanceof IntegrationError) throw err
         throw normalizeOpenAiError(err, correlationId)

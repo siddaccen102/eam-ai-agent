@@ -23,8 +23,37 @@ export type OrganizationOption = {
     description: string         // EAM DESCRIPTION, e.g., "Vopak Brasil S.A. - Terminal Aratu"
 }
 
+// Result of the AI org-matcher. Discriminated union so consumers can branch
+// on `kind` and the compiler narrows the type accordingly:
+//   - "auto" : top match >= 0.9 confidence; no user input needed
+//   - "pick" : 0.6 <= top < 0.9; surface candidates and let the user pick
+//   - "fail" : nothing usable; show an explicit error
+export type OrgResolution =
+    | {
+          kind: "auto"
+          organization: OrganizationOption
+          confidence: number
+          reasoning?: string
+      }
+    | {
+          kind: "pick"
+          candidates: OrganizationOption[]
+          topConfidence: number
+          reason: "low_confidence"
+      }
+    | {
+          kind: "fail"
+          reason:
+              | "no_candidates_available"
+              | "llm_returned_no_matches"
+              | "llm_returned_unknown_org_code"
+              | "no_candidates_above_threshold"
+          topConfidence?: number
+      }
+
 // More canonical DTOs land here as we map them in later mini-quests:
 //   ValidatedUser           ✅ done
-//   OrganizationContext     ✅ done (EAM organization, name -> code resolution)
+//   OrganizationOption      ✅ done (EAM organization, name -> code resolution)
+//   OrgResolution           ✅ done (AI matcher result, discriminated union)
 //   ProblemCodeOption       (EAM problem code)
 //   WorkRequestResult       (EAM work order create response)
