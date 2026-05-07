@@ -15,6 +15,7 @@ const envSchema = z.object({
     EAM_ROLE: z.string().min(1).default("*"),
     EAM_ORGANIZATION: z.string().min(1).default("VTAL"),
     OPENAI_API_KEY: z.string().min(1),
+    OPENAI_MODEL: z.string().min(1).default("gpt-4o-mini"),
     WORKDAY_MODE: z.enum(["mock", "live"]).default("mock")
 });
 

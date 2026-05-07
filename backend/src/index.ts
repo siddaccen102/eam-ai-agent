@@ -2,6 +2,7 @@ import express from "express";
 import { env } from "./config/env";
 import workdayRouter from "./routes/workday"
 import eamRouter from "./routes/eam"
+import llmRouter from "./routes/llm"
 
 const app = express()
 
@@ -11,6 +12,7 @@ app.use(express.json())
 // mount the router
 app.use("/integrations/workday", workdayRouter)
 app.use("/integrations/eam", eamRouter)
+app.use("/integrations/llm", llmRouter)
 
 const PORT = Number(env.PORT)
 

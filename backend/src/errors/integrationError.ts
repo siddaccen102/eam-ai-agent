@@ -10,7 +10,7 @@ export type IntegrationErrorCode =
 
 
 // Step 2 - Define which provider exist
-export type IntegrationProvider = "workday" | "eam"
+export type IntegrationProvider = "workday" | "eam" | "llm"
 
 // Step 3 - Define the "details" shape
 export interface IntegrationErrorDetails {
