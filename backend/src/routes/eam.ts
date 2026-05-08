@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express"
-import { getEamCollection, getEamOrganizations } from "../services/eamClient"
-import { toEquipmentOption, EamAssetRaw } from "../services/eamMappers"
+import { getEamCollection, getEamEquipmentForOrg, getEamOrganizations } from "../services/eamClient"
+import { toEquipmentOption, EamAssetRaw, EamPositionRaw } from "../services/eamMappers"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -56,6 +56,113 @@ router.get("/smoke/organizations", async (req: Request, res: Response) =>{
         return res.status(500).send({
             code: "INTERNAL_ERROR",
             message: "Unexpected error during EAM organization smoke test"
+        })
+    }
+})
+
+// GET /smoke/equipment-for?orgCode=VTAT[&cursor=N&pageSize=N&includeInactive=1]
+// Equipment (Position-type) scoped to a specific EAM org code, paginated via
+// EAM's cursorposition. Active-only by default; opt in to inactive equipment
+// with includeInactive=1. Pass nextCursor from a prior response back as
+// cursor=N to fetch the next page.
+router.get("/smoke/equipment-for", async (req: Request, res: Response) => {
+    const orgCode = typeof req.query.orgCode === "string" ? req.query.orgCode : undefined
+    if (!orgCode) {
+        return res.status(400).send({
+            code: "VALIDATION_ERROR",
+            message: "orgCode query parameter is required",
+        })
+    }
+
+    // Numeric query params arrive as strings; coerce defensively. Invalid /
+    // negative values fall back to defaults rather than throwing - smoke route,
+    // not a strict business endpoint.
+    const cursorRaw = typeof req.query.cursor === "string" ? Number(req.query.cursor) : 0
+    const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 0 ? cursorRaw : 0
+    const pageSizeRaw = typeof req.query.pageSize === "string" ? Number(req.query.pageSize) : 50
+    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : 50
+    const includeInactive = req.query.includeInactive === "1"
+
+    try {
+        const result = await getEamEquipmentForOrg(orgCode, {
+            cursor,
+            pageSize,
+            activeOnly: !includeInactive,
+        })
+        return res.send({
+            status: "ok",
+            provider: "eam",
+            orgCode,
+            cursor,
+            pageSize,
+            ...result,
+        })
+    } catch (err) {
+        if (err instanceof IntegrationError) {
+            return res.status(integrationErrorHttpStatus(err)).send(err.toJSON())
+        }
+        return res.status(500).send({
+            code: "INTERNAL_ERROR",
+            message: "Unexpected error during EAM equipment-for-org smoke test",
+        })
+    }
+})
+
+// GET /smoke/positions-raw?cursor=N
+// Pass-through to EAM /positions with NO org filter applied. Returns the same
+// mixed-org global page Swagger shows, for sanity-checking that:
+//   1) our backend can reach EAM,
+//   2) EAM returns global Position records regardless of the organization
+//      header (VTAT records are sparse in this stream),
+//   3) the "empty records" responses from /smoke/equipment-for are a filter
+//      effect, not a connectivity bug.
+router.get("/smoke/positions-raw", async (req: Request, res: Response) => {
+    const cursorRaw = typeof req.query.cursor === "string" ? Number(req.query.cursor) : 0
+    const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 0 ? cursorRaw : 0
+
+    try {
+        const headers: Record<string, string> = {}
+        if (cursor > 0) headers.cursorposition = String(cursor)
+
+        const collection = await getEamCollection<EamPositionRaw>(
+            "/positions",
+            undefined,
+            headers
+        )
+
+        // Map for readability + summarize org distribution so the user can see
+        // exactly how thin VTAT (or whatever) is in this slice.
+        const summary: Record<string, number> = {}
+        for (const r of collection.records) {
+            const org = r.POSITIONID?.ORGANIZATIONID?.ORGANIZATIONCODE ?? "(none)"
+            summary[org] = (summary[org] ?? 0) + 1
+        }
+
+        const compactRecords = collection.records.map((r) => ({
+            equipmentCode: r.POSITIONID?.EQUIPMENTCODE,
+            description: r.POSITIONID?.DESCRIPTION,
+            organizationCode: r.POSITIONID?.ORGANIZATIONID?.ORGANIZATIONCODE,
+            outOfService: r.OUTOFSERVICE,
+        }))
+
+        return res.send({
+            status: "ok",
+            provider: "eam",
+            cursor,
+            cursorMeta: collection.cursor,
+            total: collection.total,
+            entityName: collection.entityName,
+            recordsReturned: collection.records.length,
+            orgDistribution: summary,
+            records: compactRecords,
+        })
+    } catch (err) {
+        if (err instanceof IntegrationError) {
+            return res.status(integrationErrorHttpStatus(err)).send(err.toJSON())
+        }
+        return res.status(500).send({
+            code: "INTERNAL_ERROR",
+            message: "Unexpected error during EAM positions-raw smoke test",
         })
     }
 })
