@@ -12,9 +12,9 @@ export type ValidatedUser = {
 
 export type EquipmentOption = {
     equipmentCode: string
-    label: string
+    description: string         // EAM equipment description (POSITIONID.DESCRIPTION / ASSETID.DESCRIPTION)
     equipmentClass?: string
-    locationCode?: string
+    departmentCode?: string     // EAM DEPARTMENTID.DEPARTMENTCODE - the equipment's owning department
     isActive: boolean
 }
 

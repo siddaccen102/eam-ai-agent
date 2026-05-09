@@ -25,14 +25,16 @@ export type EamAssetRaw = {
     OUTOFSERVICE: "true" | "false" | null
 }
 
-// EAM /organization wraps the actual code+description inside an ORGANIZATIONID
-// object - same pattern as ASSETID.ORGANIZATIONID on asset records.
-// We only model the fields we use; everything else (currency, locale, UDFs, ...)
-// is intentionally ignored.
-export type EamOrganizationRaw = {
-    ORGANIZATIONID: {
-        ORGANIZATIONCODE: string
-        DESCRIPTION: string | null
+// EAM /usersetup/{user}/organizations returns USERORGANIZATION records: the
+// orgs the authenticated user has access to. ORGANIZATIONID is nested one
+// level deeper than on /organization (under USERORGANIZATIONID), reflecting
+// the user-org join semantics. We only model the fields we use.
+export type EamUserOrganizationRaw = {
+    USERORGANIZATIONID: {
+        ORGANIZATIONID: {
+            ORGANIZATIONCODE: string
+            DESCRIPTION: string | null
+        }
     }
 }
 
@@ -71,18 +73,20 @@ export type EamPositionRaw = {
 export function toEquipmentOption(asset: EamAssetRaw): EquipmentOption {
     return {
         equipmentCode: asset.ASSETID.EQUIPMENTCODE,
-        label: asset.ASSETID.DESCRIPTION ?? asset.ASSETID.EQUIPMENTCODE,
+        description: asset.ASSETID.DESCRIPTION ?? asset.ASSETID.EQUIPMENTCODE,
         equipmentClass: asset.CLASSID?.CLASSCODE ?? undefined,
-        locationCode: asset.DEPARTMENTID?.DEPARTMENTCODE ?? undefined,
+        departmentCode: asset.DEPARTMENTID?.DEPARTMENTCODE ?? undefined,
         isActive: asset.OUTOFSERVICE === "false"
     }
 }
 
-// toOrganizationOption - pure mapping from raw EAM organization to canonical DTO.
+// toUserOrganizationOption - pure mapping from a USERORGANIZATION record to the
+// canonical OrganizationOption. Caller is responsible for filtering out the "*"
+// wildcard org (it's the EAM "all-orgs" sentinel, not a real terminal).
 // description falls back to code if upstream returns null - so the AI matcher
 // never sees an empty string.
-export function toOrganizationOption(raw: EamOrganizationRaw): OrganizationOption {
-    const id = raw.ORGANIZATIONID
+export function toUserOrganizationOption(raw: EamUserOrganizationRaw): OrganizationOption {
+    const id = raw.USERORGANIZATIONID.ORGANIZATIONID
     return {
         code: id.ORGANIZATIONCODE,
         description: id.DESCRIPTION ?? id.ORGANIZATIONCODE,
@@ -95,9 +99,9 @@ export function toOrganizationOption(raw: EamOrganizationRaw): OrganizationOptio
 export function toPositionEquipmentOption(pos: EamPositionRaw): EquipmentOption {
     return {
         equipmentCode: pos.POSITIONID.EQUIPMENTCODE,
-        label: pos.POSITIONID.DESCRIPTION ?? pos.POSITIONID.EQUIPMENTCODE,
+        description: pos.POSITIONID.DESCRIPTION ?? pos.POSITIONID.EQUIPMENTCODE,
         equipmentClass: pos.CLASSID?.CLASSCODE ?? undefined,
-        locationCode: pos.DEPARTMENTID?.DEPARTMENTCODE ?? undefined,
+        departmentCode: pos.DEPARTMENTID?.DEPARTMENTCODE ?? undefined,
         isActive: pos.OUTOFSERVICE === "false",
     }
 }

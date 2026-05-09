@@ -3,6 +3,7 @@ import { env } from "./config/env";
 import workdayRouter from "./routes/workday"
 import eamRouter from "./routes/eam"
 import llmRouter from "./routes/llm"
+import authRouter from "./routes/auth"
 
 const app = express()
 
@@ -10,6 +11,7 @@ const app = express()
 app.use(express.json())
 
 // mount the router
+app.use("/auth", authRouter)
 app.use("/integrations/workday", workdayRouter)
 app.use("/integrations/eam", eamRouter)
 app.use("/integrations/llm", llmRouter)

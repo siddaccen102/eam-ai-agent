@@ -8,7 +8,7 @@ import {
 } from "../errors/integrationError"
 import { randomUUID } from "node:crypto"
 import { EquipmentOption, OrganizationOption } from "../types/canonical"
-import { EamOrganizationRaw, EamPositionRaw, toOrganizationOption, toPositionEquipmentOption } from "./eamMappers"
+import { EamUserOrganizationRaw, EamPositionRaw, toUserOrganizationOption, toPositionEquipmentOption } from "./eamMappers"
 
 // all constants used
 // Per-call timeout. EAM /positions typically responds in 1.8-3.5s but
@@ -88,14 +88,16 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
 }
 
 // build and export the client
+//
+// NOTE: deliberately NO instance-level `auth` config. axios v1+ has a precedence
+// quirk where instance auth in axios.create() gets re-applied during request
+// prep and clobbers any per-request `Authorization` header. We bypass the issue
+// by never setting auth on the instance and requiring every helper to receive
+// EamCallAuth, which is rendered into an explicit Authorization header below.
 function buildClient(): AxiosInstance {
     const instance = axios.create({
         baseURL: env.EAM_BASE_URL,
         timeout: EAM_DEFAULT_TIMEOUT_MS,
-        auth: {
-            username: env.EAM_USERNAME,
-            password: env.EAM_PASSWORD
-        },
         headers: {
             Accept: "application/json",
             "Content-Type": "application/json",
@@ -143,40 +145,73 @@ function buildClient(): AxiosInstance {
 export const eamClient: AxiosInstance = buildClient()
 
 console.log(
-    `[eam] adapter ready — base=${env.EAM_BASE_URL}  tenant=${env.EAM_TENANT}  org=${env.EAM_ORGANIZATION}  user=${env.EAM_USERNAME.slice(0, 2)}${"*".repeat(Math.max(0, env.EAM_USERNAME.length - 2))}`
+    `[eam] adapter ready — base=${env.EAM_BASE_URL}  tenant=${env.EAM_TENANT}  org=${env.EAM_ORGANIZATION}  auth=per-user`
 )
 
 
+// Per-request EAM credentials, sourced from the caller's session (AuthContext).
+// We render these into an explicit `Authorization: Basic <encoded>` header on
+// every request rather than relying on axios's `auth` config, because axios
+// v1+ instance-level auth (when set in axios.create) gets re-applied during
+// request prep and clobbers per-request Authorization headers - which is
+// exactly the precedence bug that produced false-positive logins. Building
+// the header ourselves keeps the auth contract obvious and testable.
+//
+// Required (not optional). The instance has no auth fallback by design, so
+// every EAM call needs creds from a real session - no shared service account.
+export type EamCallAuth = { username: string; password: string }
+
+function buildBasicAuthHeader(auth: EamCallAuth): string {
+    const encoded = Buffer.from(`${auth.username}:${auth.password}`).toString("base64")
+    return `Basic ${encoded}`
+}
+
+function withAuthHeader(
+    headers: Record<string, string> | undefined,
+    auth: EamCallAuth,
+): Record<string, string> {
+    return { ...(headers ?? {}), Authorization: buildBasicAuthHeader(auth) }
+}
+
 // getEam helper - GET wrapper that returns response.data so routes don't unwrap manually.
-// Optional `headers` overrides instance-level defaults for this call only - useful when
-// scoping a request to a specific EAM org/tenant without mutating shared client state.
+// `auth` is required - routes get it from req.auth.eamAuth (populated by requireAuth).
+// Optional `headers` overrides instance-level defaults for this call only.
 export async function getEam<T = unknown>(
     path: string,
+    auth: EamCallAuth,
     params?: Record<string, unknown>,
     headers?: Record<string, string>,
 ): Promise<T> {
-    const res = await eamClient.get<T>(path, { params, headers })
+    const res = await eamClient.get<T>(path, {
+        params,
+        headers: withAuthHeader(headers, auth),
+    })
     return res.data
 }
 
-// postEam helper - POST wrapper with separate body (B) and response generics (T)
+// postEam helper - POST wrapper with separate body (B) and response generics (T).
+// `auth` is required.
 export async function postEam<T = unknown, B = unknown>(
     path: string,
-    body: B
+    body: B,
+    auth: EamCallAuth,
 ): Promise<T> {
-    const res = await eamClient.post<T>(path, body)
+    const res = await eamClient.post<T>(path, body, {
+        headers: withAuthHeader(undefined, auth),
+    })
     return res.data
 }
 
 // getEamCollection - GET wrapper that unwraps EAM's Result.ResultData envelope.
 // Returns clean { records, total, cursor, entityName } regardless of upstream quirks.
-// Optional `headers` is forwarded to getEam for per-call scope overrides.
+// `auth` is required; `headers` is forwarded to getEam for per-call overrides.
 export async function getEamCollection<T = unknown>(
     path: string,
+    auth: EamCallAuth,
     params?: Record<string, unknown>,
     headers?: Record<string, string>,
 ): Promise<EamCollection<T>> {
-    const raw = await getEam<EamCollectionResponse<T>>(path, params, headers)
+    const raw = await getEam<EamCollectionResponse<T>>(path, auth, params, headers)
 
     // Defensive: throw a contract error if EAM returns a malformed envelope.
     if (!raw?.Result?.ResultData?.DATARECORD) {
@@ -200,35 +235,50 @@ export async function getEamCollection<T = unknown>(
     }
 }
 
-// getEamOrganizations - fetches the EAM organization list and returns canonical DTOs.
+// getEamUserOrganizations - fetches the orgs the AUTHENTICATED USER has access to,
+// not the global org catalog. Hits /usersetup/{username}/organizations, which
+// returns USERORGANIZATION records (one per user-org grant). The "*" wildcard
+// org (EAM's "all orgs" sentinel that appears for users with global access) is
+// filtered out - it isn't a real terminal/site, and downstream consumers
+// (UI dropdowns, AI matcher) should never see it.
 //
-// LIMITATION: HxGN EAM REST GET /organization caps responses at 50 records per call
-// and does NOT honor cursor / limit / pageSize / offset / start params via GET (verified
-// against the dev tenant). EAM's pagination model for this endpoint likely requires a
-// POST search envelope which we have not yet integrated.
+// Why user-scoped over global /organization:
+//   - Matches the user's mental model: they can only file work requests against
+//     orgs they have access to. Showing the global list would let them pick
+//     orgs that EAM would later reject mid-workflow.
+//   - The AI matcher's candidate pool is now naturally narrowed - matching
+//     "Aratu" against {VTAT, *} is faster/more accurate than against 50+ orgs.
 //
-// The response includes `total` so callers know whether records are truncated. If
-// total > records.length, downstream consumers (e.g. the AI matcher) should treat the
-// match space as "first 50 only" until a paged version of this helper lands.
-export async function getEamOrganizations(): Promise<{
+// The /usersetup endpoint requires the `organization: *` request header to be
+// resolvable across all orgs (the env-default `organization: VTAT` would scope
+// the lookup itself to VTAT and miss the user's other grants). We pass the
+// override per-call rather than mutating the instance default.
+export async function getEamUserOrganizations(auth: EamCallAuth): Promise<{
     records: OrganizationOption[]
     total: number
-    truncated: boolean
 }> {
-    const page = await getEamCollection<EamOrganizationRaw>("/organization")
-    const records = page.records.map(toOrganizationOption)
-    const truncated = page.total > records.length
+    // EAM treats the username as the {parentid} path segment. Encoding is a
+    // belt-and-suspenders measure - real EAM usernames are typically alphanumeric
+    // with dots, but encoding protects against any future shape change.
+    const path = `/usersetup/${encodeURIComponent(auth.username)}/organizations`
 
-    if (truncated) {
-        console.warn(
-            `[eam] /organization returned ${records.length} of ${page.total} - tail (${page.total - records.length} records) not visible to consumers; pagination follow-up required`
-        )
-    }
+    const page = await getEamCollection<EamUserOrganizationRaw>(
+        path,
+        auth,
+        undefined,
+        { organization: "*" },
+    )
+
+    // Filter out the "*" wildcard before mapping so the canonical list only
+    // contains real terminals/sites.
+    const realOrgs = page.records.filter(
+        (r) => r.USERORGANIZATIONID?.ORGANIZATIONID?.ORGANIZATIONCODE !== "*"
+    )
+    const records = realOrgs.map(toUserOrganizationOption)
 
     return {
         records,
-        total: page.total,
-        truncated,
+        total: records.length,
     }
 }
 
@@ -274,6 +324,7 @@ const EAM_EQUIPMENT_DEFAULT_PAGE_SIZE = 50
 // cap are still useful as a safety net.
 export async function getEamEquipmentForOrg(
     orgCode: string,
+    auth: EamCallAuth,
     opts?: { cursor?: number; pageSize?: number; activeOnly?: boolean }
 ): Promise<{
     records: EquipmentOption[]
@@ -314,8 +365,9 @@ export async function getEamEquipmentForOrg(
 
         const collection = await getEamCollection<EamPositionRaw>(
             "/positions",
+            auth,
             undefined,
-            headers
+            headers,
         )
         calls++
         scanned += collection.records.length

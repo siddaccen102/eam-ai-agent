@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express"
 import { chatComplete } from "../services/llmClient"
 import { getWorkdayUserByEmail } from "../services/workdayClient"
-import { getEamOrganizations } from "../services/eamClient"
+import { getEamUserOrganizations } from "../services/eamClient"
 import { resolveOrg } from "../services/orgMatcher"
+import { requireAuth } from "../middleware/requireAuth"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -38,7 +39,8 @@ router.get("/smoke", async (req: Request, res: Response) => {
 
 // GET /smoke/match-org?email=leticia.sales@vopak.com
 // Showcase: Workday user lookup -> EAM org list -> AI match -> typed OrgResolution.
-router.get("/smoke/match-org", async (req: Request, res: Response) => {
+// Protected: per-user EAM creds drive the org-list fetch (no shared service account).
+router.get("/smoke/match-org", requireAuth, async (req: Request, res: Response) => {
     const email = typeof req.query.email === "string" ? req.query.email : undefined
     if (!email) {
         return res.status(400).send({
@@ -49,13 +51,12 @@ router.get("/smoke/match-org", async (req: Request, res: Response) => {
 
     try {
         const user = await getWorkdayUserByEmail(email)
-        const orgList = await getEamOrganizations()
+        const orgList = await getEamUserOrganizations(req.auth!.eamAuth)
         const resolution = await resolveOrg(user, orgList.records)
         return res.send({
             status: "ok",
             input: { email, location: user.location, company: user.company },
             candidatesCount: orgList.records.length,
-            truncated: orgList.truncated,
             resolution,
         })
     } catch (err) {

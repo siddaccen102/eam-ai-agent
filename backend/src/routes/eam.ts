@@ -1,19 +1,22 @@
 import { Router, Request, Response } from "express"
-import { getEamCollection, getEamEquipmentForOrg, getEamOrganizations } from "../services/eamClient"
+import { getEamCollection, getEamEquipmentForOrg, getEamUserOrganizations } from "../services/eamClient"
 import { toEquipmentOption, EamAssetRaw, EamPositionRaw } from "../services/eamMappers"
 import {
     IntegrationError,
     integrationErrorHttpStatus
 } from "../errors/integrationError"
+import { requireAuth } from "../middleware/requireAuth"
 
 const router = Router()
 
 // GET /smoke/assets[?<any-eam-supported-param>]
 // Returns canonical EquipmentOption[] - vendor-free, frontend-ready.
-router.get("/smoke/assets", async (req: Request, res: Response) => {
+// Protected: per-user EAM creds drive the call (no shared service account).
+router.get("/smoke/assets", requireAuth, async (req: Request, res: Response) => {
     try {
         const collection = await getEamCollection<EamAssetRaw>(
             "/assets",
+            req.auth!.eamAuth,
             req.query as Record<string, unknown>
         )
         const records = collection.records.map(toEquipmentOption)
@@ -40,10 +43,12 @@ router.get("/smoke/assets", async (req: Request, res: Response) => {
 
 
 // GET /smoke/organizations
-// Returns the canonical EAM organization list - vendor-free, AI-matcher-ready
-router.get("/smoke/organizations", async (req: Request, res: Response) =>{
+// Returns the orgs the authenticated user has access to in EAM (not the
+// global org catalog). The "*" wildcard is filtered out by the helper.
+// Protected: per-user EAM creds drive the call (no shared service account).
+router.get("/smoke/organizations", requireAuth, async (req: Request, res: Response) =>{
     try {
-        const result = await getEamOrganizations()
+        const result = await getEamUserOrganizations(req.auth!.eamAuth)
         return res.send({
             status: "ok",
             provider: "eam",
@@ -65,7 +70,11 @@ router.get("/smoke/organizations", async (req: Request, res: Response) =>{
 // EAM's cursorposition. Active-only by default; opt in to inactive equipment
 // with includeInactive=1. Pass nextCursor from a prior response back as
 // cursor=N to fetch the next page.
-router.get("/smoke/equipment-for", async (req: Request, res: Response) => {
+//
+// Protected: the requireAuth middleware enforces a valid session and attaches
+// req.auth. The helper uses req.auth.eamAuth so EAM scopes the response to
+// the logged-in user's org access, not the env-default integration user.
+router.get("/smoke/equipment-for", requireAuth, async (req: Request, res: Response) => {
     const orgCode = typeof req.query.orgCode === "string" ? req.query.orgCode : undefined
     if (!orgCode) {
         return res.status(400).send({
@@ -84,7 +93,9 @@ router.get("/smoke/equipment-for", async (req: Request, res: Response) => {
     const includeInactive = req.query.includeInactive === "1"
 
     try {
-        const result = await getEamEquipmentForOrg(orgCode, {
+        // requireAuth guarantees req.auth is set; the ! tells TS what
+        // the middleware contract already promises at runtime.
+        const result = await getEamEquipmentForOrg(orgCode, req.auth!.eamAuth, {
             cursor,
             pageSize,
             activeOnly: !includeInactive,
@@ -116,7 +127,8 @@ router.get("/smoke/equipment-for", async (req: Request, res: Response) => {
 //      header (VTAT records are sparse in this stream),
 //   3) the "empty records" responses from /smoke/equipment-for are a filter
 //      effect, not a connectivity bug.
-router.get("/smoke/positions-raw", async (req: Request, res: Response) => {
+// Protected: per-user EAM creds drive the call (no shared service account).
+router.get("/smoke/positions-raw", requireAuth, async (req: Request, res: Response) => {
     const cursorRaw = typeof req.query.cursor === "string" ? Number(req.query.cursor) : 0
     const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 0 ? cursorRaw : 0
 
@@ -126,6 +138,7 @@ router.get("/smoke/positions-raw", async (req: Request, res: Response) => {
 
         const collection = await getEamCollection<EamPositionRaw>(
             "/positions",
+            req.auth!.eamAuth,
             undefined,
             headers
         )
