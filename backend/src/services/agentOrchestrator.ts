@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
     AgentRunInput,
     AgentRunResult,
@@ -57,6 +58,20 @@ export async function runAgent(
     input: AgentRunInput,
     auth: EamCallAuth,
 ): Promise<AgentRunResult> {
+    // correlationId: one ID per user-facing run; stitches every log line +
+    // the response envelope together. Distinct from the per-outbound-call
+    // cids that workdayClient/eamClient mint internally - those are per-HTTP
+    // request, this is per-agent-run. Threading this into outbound calls is a
+    // documented post-PoC follow-up (would need a `cid` parameter on every
+    // helper signature - too invasive for the demo).
+    const correlationId = randomUUID()
+
+    // HIL re-entry invariant: stages process in order. The orchestrator
+    // returns the FIRST `pick_*` it encounters; pre-resolved fields beyond
+    // that point just travel along on the input until their stage is reached.
+    // Concretely: if the user supplies typeCode without equipmentCode, stage
+    // 2 still returns pick_equipment first - typeCode is unused this round
+    // and gets reused on the next call without re-validation here.
     const resolved: AgentRunResolved = {}
 
     // ---- Stage 1a: Workday user lookup ---------------------------------------
@@ -70,6 +85,7 @@ export async function runAgent(
                     kind: "fail",
                     reason: "user_not_found",
                     message: `No Workday user matched ${input.email}`,
+                    correlationId,
                     resolved,
                 }
             }
@@ -82,6 +98,7 @@ export async function runAgent(
                     kind: "fail",
                     reason: "user_inactive",
                     message: `Workday user ${input.email} is inactive`,
+                    correlationId,
                     resolved,
                 }
             }
@@ -90,7 +107,7 @@ export async function runAgent(
         throw err
     }
     resolved.user = user
-    console.log(`[agent] stage=1a outcome=user_resolved email=${user.email} location=${user.location}`)
+    console.log(`[agent] cid=${correlationId} stage=1a outcome=user_resolved email=${user.email} location=${user.location}`)
 
     // ---- Stage 1b: org resolution --------------------------------------------
     // Always fetch the user-orgs list, even when organizationCode is supplied
@@ -106,6 +123,7 @@ export async function runAgent(
             kind: "fail",
             reason: "no_org_match",
             message: "User has no EAM organization access",
+            correlationId,
             resolved,
         }
     }
@@ -118,22 +136,24 @@ export async function runAgent(
                 kind: "fail",
                 reason: "no_org_match",
                 message: `User does not have access to organization ${input.organizationCode}`,
+                correlationId,
                 resolved,
             }
         }
         organization = found
-        console.log(`[agent] stage=1b outcome=preresolved_org code=${organization.code}`)
+        console.log(`[agent] cid=${correlationId} stage=1b outcome=preresolved_org code=${organization.code}`)
     } else {
         const orgRes = await resolveOrg(user, orgList.records)
         if (orgRes.kind === "auto") {
             organization = orgRes.organization
-            console.log(`[agent] stage=1b outcome=auto_org code=${organization.code} confidence=${orgRes.confidence.toFixed(2)}`)
+            console.log(`[agent] cid=${correlationId} stage=1b outcome=auto_org code=${organization.code} confidence=${orgRes.confidence.toFixed(2)}`)
         } else if (orgRes.kind === "pick") {
-            console.log(`[agent] stage=1b outcome=pick_org candidates=${orgRes.candidates.length} top=${orgRes.topConfidence.toFixed(2)}`)
+            console.log(`[agent] cid=${correlationId} stage=1b outcome=pick_org candidates=${orgRes.candidates.length} top=${orgRes.topConfidence.toFixed(2)}`)
             return {
                 kind: "pick_org",
                 candidates: orgRes.candidates,
                 topConfidence: orgRes.topConfidence,
+                correlationId,
                 resolved,
             }
         } else {
@@ -141,11 +161,12 @@ export async function runAgent(
             // The matcher's internal reason ("llm_returned_no_matches",
             // "no_candidates_above_threshold", etc.) is informational; the
             // frontend only needs to know "we couldn't pick an org for you."
-            console.log(`[agent] stage=1b outcome=fail reason=${orgRes.reason}`)
+            console.log(`[agent] cid=${correlationId} stage=1b outcome=fail reason=${orgRes.reason}`)
             return {
                 kind: "fail",
                 reason: "no_org_match",
                 message: `AI org matcher returned no usable match (${orgRes.reason})`,
+                correlationId,
                 resolved,
             }
         }
@@ -175,18 +196,19 @@ export async function runAgent(
         )
         if (!found) {
             console.log(
-                `[agent] stage=2 outcome=fail reason=no_equipment_match code=${input.equipmentCode}`
+                `[agent] cid=${correlationId} stage=2 outcome=fail reason=no_equipment_match code=${input.equipmentCode}`
             )
             return {
                 kind: "fail",
                 reason: "no_equipment_match",
                 message: `Equipment ${input.equipmentCode} not found in organization ${organization.code}`,
+                correlationId,
                 resolved,
             }
         }
         equipment = found
         console.log(
-            `[agent] stage=2 outcome=preresolved_equipment code=${equipment.equipmentCode}`
+            `[agent] cid=${correlationId} stage=2 outcome=preresolved_equipment code=${equipment.equipmentCode}`
         )
     } else {
         const page = await getEamEquipmentForOrg(organization.code, auth, {
@@ -194,21 +216,23 @@ export async function runAgent(
             pageSize: 50,
         })
         if (page.records.length === 0) {
-            console.log(`[agent] stage=2 outcome=fail reason=no_equipment_match (empty org)`)
+            console.log(`[agent] cid=${correlationId} stage=2 outcome=fail reason=no_equipment_match (empty org)`)
             return {
                 kind: "fail",
                 reason: "no_equipment_match",
                 message: `No equipment found in organization ${organization.code}`,
+                correlationId,
                 resolved,
             }
         }
         console.log(
-            `[agent] stage=2 outcome=pick_equipment candidates=${page.records.length} nextCursor=${page.nextCursor ?? "EOF"}`
+            `[agent] cid=${correlationId} stage=2 outcome=pick_equipment candidates=${page.records.length} nextCursor=${page.nextCursor ?? "EOF"}`
         )
         return {
             kind: "pick_equipment",
             candidates: page.records,
             nextCursor: page.nextCursor,
+            correlationId,
             resolved,
         }
     }
@@ -223,22 +247,24 @@ export async function runAgent(
     if (input.problemCode) {
         const found = findProblemCode(input.problemCode)
         if (!found) {
-            console.log(`[agent] stage=3 outcome=fail reason=no_problem_code_match code=${input.problemCode}`)
+            console.log(`[agent] cid=${correlationId} stage=3 outcome=fail reason=no_problem_code_match code=${input.problemCode}`)
             return {
                 kind: "fail",
                 reason: "no_problem_code_match",
                 message: `Unknown problemCode: ${input.problemCode}`,
+                correlationId,
                 resolved,
             }
         }
         problem = found
-        console.log(`[agent] stage=3 outcome=preresolved_problem_code code=${problem.code}`)
+        console.log(`[agent] cid=${correlationId} stage=3 outcome=preresolved_problem_code code=${problem.code}`)
     } else {
         const candidates = getProblemCodes()
-        console.log(`[agent] stage=3 outcome=pick_problem_code candidates=${candidates.length}`)
+        console.log(`[agent] cid=${correlationId} stage=3 outcome=pick_problem_code candidates=${candidates.length}`)
         return {
             kind: "pick_problem_code",
             candidates,
+            correlationId,
             resolved,
         }
     }
@@ -251,22 +277,24 @@ export async function runAgent(
     if (input.typeCode) {
         const found = findWorkRequestType(input.typeCode)
         if (!found) {
-            console.log(`[agent] stage=4 outcome=fail reason=no_type_match code=${input.typeCode}`)
+            console.log(`[agent] cid=${correlationId} stage=4 outcome=fail reason=no_type_match code=${input.typeCode}`)
             return {
                 kind: "fail",
                 reason: "no_type_match",
                 message: `Unknown typeCode: ${input.typeCode}`,
+                correlationId,
                 resolved,
             }
         }
         workRequestType = found
-        console.log(`[agent] stage=4 outcome=preresolved_type code=${workRequestType.code}`)
+        console.log(`[agent] cid=${correlationId} stage=4 outcome=preresolved_type code=${workRequestType.code}`)
     } else {
         const candidates = getWorkRequestTypes()
-        console.log(`[agent] stage=4 outcome=pick_type candidates=${candidates.length}`)
+        console.log(`[agent] cid=${correlationId} stage=4 outcome=pick_type candidates=${candidates.length}`)
         return {
             kind: "pick_type",
             candidates,
+            correlationId,
             resolved,
         }
     }
@@ -280,12 +308,13 @@ export async function runAgent(
     // than constructing a bogus EAM body.
     if (!equipment.departmentCode) {
         console.log(
-            `[agent] stage=5 outcome=fail reason=internal_error missing_departmentCode equipment=${equipment.equipmentCode}`
+            `[agent] cid=${correlationId} stage=5 outcome=fail reason=internal_error missing_departmentCode equipment=${equipment.equipmentCode}`
         )
         return {
             kind: "fail",
             reason: "internal_error",
             message: `Equipment ${equipment.equipmentCode} has no departmentCode; cannot file work request`,
+            correlationId,
             resolved,
         }
     }
@@ -311,10 +340,11 @@ export async function runAgent(
         auth,
     )
 
-    console.log(`[agent] stage=5 outcome=success jobNumber=${workRequest.jobNumber}`)
+    console.log(`[agent] cid=${correlationId} stage=5 outcome=success jobNumber=${workRequest.jobNumber}`)
     return {
         kind: "success",
         workRequest,
+        correlationId,
         resolved,
     }
 }

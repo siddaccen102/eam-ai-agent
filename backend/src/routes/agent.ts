@@ -69,13 +69,38 @@ router.post("/run", requireAuth, async (req: Request, res: Response) => {
         typeCode: optionalString(body.typeCode),
     }
 
+    // stages_preresolved: 0..4 count of pre-resolved code fields. Demo-friendly
+    // signal in logs to distinguish a fresh run (0) from a HIL re-entry (1+).
+    const stagesPreresolved =
+        (input.organizationCode ? 1 : 0) +
+        (input.equipmentCode ? 1 : 0) +
+        (input.problemCode ? 1 : 0) +
+        (input.typeCode ? 1 : 0)
+
+    // Entry log. cid is undefined here - runAgent generates it inside. The exit
+    // log uses result.correlationId so route + orchestrator share one cid; we
+    // accept a momentary asymmetry where the entry line has no cid (the cost of
+    // not threading a cid generator through the orchestrator).
+    const startedAt = Date.now()
+    console.log(
+        `[agent.route] entry email=${input.email} stages_preresolved=${stagesPreresolved} desc_len=${input.description.length}`
+    )
+
     try {
         const result = await runAgent(input, req.auth!.eamAuth)
+        console.log(
+            `[agent.route] exit cid=${result.correlationId} outcome=${result.kind} duration_ms=${Date.now() - startedAt}`
+        )
         return res.send(result)
     } catch (err) {
+        const duration = Date.now() - startedAt
         if (err instanceof IntegrationError) {
+            console.log(
+                `[agent.route] exit error=integration code=${err.code} duration_ms=${duration}`
+            )
             return res.status(integrationErrorHttpStatus(err)).send(err.toJSON())
         }
+        console.log(`[agent.route] exit error=internal duration_ms=${duration}`)
         return res.status(500).send({
             code: "INTERNAL_ERROR",
             message: "Unexpected error during agent run",

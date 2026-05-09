@@ -174,6 +174,7 @@ export type AgentRunResult =
           // Happy path: every stage resolved + work request created in EAM.
           kind: "success"
           workRequest: WorkRequestResult
+          correlationId: string
           resolved: AgentRunResolved
       }
     | {
@@ -182,6 +183,7 @@ export type AgentRunResult =
           kind: "pick_org"
           candidates: OrganizationOption[]
           topConfidence: number
+          correlationId: string
           resolved: AgentRunResolved
       }
     | {
@@ -193,6 +195,7 @@ export type AgentRunResult =
           kind: "pick_equipment"
           candidates: EquipmentOption[]
           nextCursor: number | null
+          correlationId: string
           resolved: AgentRunResolved
       }
     | {
@@ -200,6 +203,7 @@ export type AgentRunResult =
           // (small, static) catalogue.
           kind: "pick_problem_code"
           candidates: ProblemCodeOption[]
+          correlationId: string
           resolved: AgentRunResolved
       }
     | {
@@ -207,6 +211,7 @@ export type AgentRunResult =
           // the static catalogue.
           kind: "pick_type"
           candidates: WorkRequestTypeOption[]
+          correlationId: string
           resolved: AgentRunResolved
       }
     | {
@@ -223,5 +228,6 @@ export type AgentRunResult =
               | "no_type_match"
               | "internal_error"
           message?: string
+          correlationId: string
           resolved: AgentRunResolved
       }
