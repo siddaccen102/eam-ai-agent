@@ -4,6 +4,7 @@ import workdayRouter from "./routes/workday"
 import eamRouter from "./routes/eam"
 import llmRouter from "./routes/llm"
 import authRouter from "./routes/auth"
+import agentRouter from "./routes/agent"
 
 const app = express()
 
@@ -15,6 +16,7 @@ app.use("/auth", authRouter)
 app.use("/integrations/workday", workdayRouter)
 app.use("/integrations/eam", eamRouter)
 app.use("/integrations/llm", llmRouter)
+app.use("/integrations/agent", agentRouter)
 
 const PORT = Number(env.PORT)
 

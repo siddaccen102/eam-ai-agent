@@ -124,3 +124,98 @@ export type OrgResolution =
 //   WorkRequestTypeOption   ✅ done (static lookup; see services/workRequestTypes.ts)
 //   WorkRequestInput        ✅ done (canonical create-work-request input)
 //   WorkRequestResult       ✅ done (EAM work order create response, canonical)
+//   AgentRunInput           ✅ done (input to the orchestrator)
+//   AgentRunResult          ✅ done (discriminated union: success / pick_* / fail)
+
+// ---- Agent orchestrator contracts (Mini 6.1) ---------------------------------
+//
+// The orchestrator stitches Workday user lookup, EAM org list, AI org matcher,
+// equipment lookup, problem-code lookup, type lookup and work-request creation
+// into ONE typed contract. Every call to POST /integrations/agent/run takes the
+// same input shape and returns one of several discriminated results.
+//
+// Re-entry pattern: the input is idempotent. The first call has just email +
+// description; if the orchestrator returns a HIL pick variant, the frontend
+// re-calls with the user's chosen value filled in (e.g., organizationCode).
+// The orchestrator skips stages whose inputs are already resolved. No server-
+// side run state, no run IDs, no TTL to manage.
+
+export type AgentRunInput = {
+    // Required - the workflow needs both at minimum.
+    email: string                    // Workday lookup key
+    description: string              // user's free-text problem statement; AI matches against
+                                     // equipment/problem codes/types AND becomes the WR description.
+                                     // Capped at 200 chars to match the WR description limit -
+                                     // truncation later would surprise the user.
+
+    // Optional - filled by the frontend on re-entry after a HIL pick.
+    organizationCode?: string
+    equipmentCode?: string
+    problemCode?: string
+    typeCode?: string
+}
+
+// Partial-resolution echo. Every AgentRunResult variant carries this so the
+// frontend can render "what we figured out so far" alongside the next prompt.
+// Keeps the server as the source of truth for run state - the frontend never
+// has to track what's been resolved across calls.
+export type AgentRunResolved = {
+    user?: ValidatedUser
+    organization?: OrganizationOption
+    equipment?: EquipmentOption
+    problemCode?: ProblemCodeOption
+    type?: WorkRequestTypeOption
+}
+
+// All possible outcomes of a single runAgent call. Discriminated union on `kind`
+// so consumers can switch exhaustively and add a new HIL state in one place.
+export type AgentRunResult =
+    | {
+          // Happy path: every stage resolved + work request created in EAM.
+          kind: "success"
+          workRequest: WorkRequestResult
+          resolved: AgentRunResolved
+      }
+    | {
+          // AI matcher returned mid-confidence on org. Frontend prompts user
+          // to pick from the candidates and re-calls with organizationCode set.
+          kind: "pick_org"
+          candidates: OrganizationOption[]
+          topConfidence: number
+          resolved: AgentRunResolved
+      }
+    | {
+          // Equipment resolution couldn't pick a single record from the free
+          // text. Surface candidates from the user's authorized org.
+          kind: "pick_equipment"
+          candidates: EquipmentOption[]
+          resolved: AgentRunResolved
+      }
+    | {
+          // Problem code couldn't be resolved from the free text. Show the
+          // (small, static) catalogue.
+          kind: "pick_problem_code"
+          candidates: ProblemCodeOption[]
+          resolved: AgentRunResolved
+      }
+    | {
+          // Type couldn't be resolved (no obvious CAPEX vs OPEX cue). Show
+          // the static catalogue.
+          kind: "pick_type"
+          candidates: WorkRequestTypeOption[]
+          resolved: AgentRunResolved
+      }
+    | {
+          // Unrecoverable. The reason union grows as stages 6.2-6.4 add
+          // failure modes; for the 6.1 skeleton only "not_implemented" is wired.
+          kind: "fail"
+          reason:
+              | "not_implemented"
+              | "user_not_found"
+              | "user_inactive"
+              | "no_org_match"
+              | "no_equipment_match"
+              | "internal_error"
+          message?: string
+          resolved: AgentRunResolved
+      }
