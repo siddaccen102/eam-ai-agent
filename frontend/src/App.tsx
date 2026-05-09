@@ -1,25 +1,36 @@
-const backendUrl = import.meta.env.VITE_BACKEND_URL ?? "not-set";
+import { SessionProvider } from "./auth/SessionContext"
+import { useSession } from "./auth/useSession"
+import { LoginForm } from "./components/LoginForm"
+import { AuthenticatedShell } from "./components/AuthenticatedShell"
+
+// AppRoutes - the auth state machine. Three states:
+//   - "checking"      : initial mount, /auth/me in flight (stored session?
+//                       valid?). Render a tiny placeholder so we don't flash
+//                       the login form for users who are already logged in.
+//   - "anonymous"     : no stored session OR /auth/me rejected it. Show login.
+//   - "authenticated" : valid session in context. Show the shell.
+//
+// We split AppRoutes from App so AppRoutes can call useSession (which requires
+// being inside <SessionProvider>). App itself doesn't read the session - it
+// just sets up the provider scope.
+function AppRoutes() {
+    const { status } = useSession()
+
+    if (status === "checking") {
+        return (
+            <main className="min-h-screen flex items-center justify-center bg-slate-50">
+                <p className="text-sm text-slate-500">Checking session...</p>
+            </main>
+        )
+    }
+
+    return status === "authenticated" ? <AuthenticatedShell /> : <LoginForm />
+}
 
 export default function App() {
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <section className="mx-auto max-w-3xl px-6 py-12">
-        <h1 className="text-3xl font-bold">EAM AI Agent Workflow</h1>
-        <p className="mt-3 text-slate-600">
-          Enterprise workflow automation for Workday and HxGN EAM orchestration.
-        </p>
-
-        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">Step 1: Validate user email</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            This is the starter shell for the guided workflow UI.
-          </p>
-        </div>
-
-        <p className="mt-6 text-xs text-slate-500">
-          Backend URL: {backendUrl}
-        </p>
-      </section>
-    </main>
-  );
+    return (
+        <SessionProvider>
+            <AppRoutes />
+        </SessionProvider>
+    )
 }
