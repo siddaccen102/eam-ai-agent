@@ -423,6 +423,53 @@ export async function getEamEquipmentForOrg(
     }
 }
 
+// findEamEquipmentByCode - locate a single equipment record by its code within
+// an org. Used by the agent orchestrator's HIL re-entry path to validate a
+// user-supplied equipmentCode and recover its full canonical metadata
+// (departmentCode + locationCode are needed for the work-request POST).
+//
+// Why a brute-force pagination scan and not a direct GET /positions/{code}:
+//   EAM does expose single-record fetches but we haven't modeled them yet.
+//   For typical org sizes (<= ~1500 equipment records) a few cursor advances
+//   find anything in well under a second per call. We can swap to a direct
+//   fetch later as an optimization without touching callers.
+//
+// Why activeOnly defaults to true here:
+//   We always show users active equipment only (the helper above defaults to
+//   activeOnly: true). If a user submits a code we never showed them, treating
+//   it as not-found is correct - either it's been deactivated since the list
+//   was rendered, or it's a forge attempt. Both should fail consistently.
+//
+// OUTER_CAP belt-and-suspenders: the inner getEamEquipmentForOrg already has
+// its own HARD_CAP=30 raw-EAM-page calls per invocation. If we somehow keep
+// looping (helper misreports exhaustion, EAM returns ever-growing records),
+// the outer cap stops us at 20 helper calls = up to ~1000 returned records
+// across 600 raw EAM pages. Generous ceiling for any single Vopak terminal.
+export async function findEamEquipmentByCode(
+    orgCode: string,
+    equipmentCode: string,
+    auth: EamCallAuth,
+): Promise<EquipmentOption | null> {
+    const OUTER_CAP = 20
+    let cursor = 0
+
+    for (let i = 0; i < OUTER_CAP; i++) {
+        const page = await getEamEquipmentForOrg(orgCode, auth, {
+            cursor,
+            pageSize: 50,
+        })
+        const found = page.records.find((r) => r.equipmentCode === equipmentCode)
+        if (found) return found
+        if (page.exhausted || page.nextCursor === null) return null
+        cursor = page.nextCursor
+    }
+
+    console.warn(
+        `[eam] findEamEquipmentByCode hit OUTER_CAP=${OUTER_CAP} for org=${orgCode} code=${equipmentCode}; treating as not-found`
+    )
+    return null
+}
+
 // createEamWorkRequest - canonical input + enrichment -> POST /workorders -> canonical result.
 //
 // The route layer is responsible for:

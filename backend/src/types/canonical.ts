@@ -185,10 +185,14 @@ export type AgentRunResult =
           resolved: AgentRunResolved
       }
     | {
-          // Equipment resolution couldn't pick a single record from the free
-          // text. Surface candidates from the user's authorized org.
+          // Equipment HIL: surface the first page of the user's authorized
+          // org's equipment list. Frontend handles "Load more" by hitting
+          // /integrations/eam/smoke/equipment-for?orgCode=X&cursor=N directly
+          // - the agent endpoint stays focused on workflow, not pagination.
+          // nextCursor is null when EAM has no further records.
           kind: "pick_equipment"
           candidates: EquipmentOption[]
+          nextCursor: number | null
           resolved: AgentRunResolved
       }
     | {

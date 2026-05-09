@@ -2,10 +2,16 @@ import {
     AgentRunInput,
     AgentRunResult,
     AgentRunResolved,
+    EquipmentOption,
     OrganizationOption,
     ValidatedUser,
 } from "../types/canonical"
-import { EamCallAuth, getEamUserOrganizations } from "./eamClient"
+import {
+    EamCallAuth,
+    findEamEquipmentByCode,
+    getEamEquipmentForOrg,
+    getEamUserOrganizations,
+} from "./eamClient"
 import { getWorkdayUserByEmail } from "./workdayClient"
 import { resolveOrg } from "./orgMatcher"
 import { IntegrationError } from "../errors/integrationError"
@@ -139,11 +145,73 @@ export async function runAgent(
     }
     resolved.organization = organization
 
-    // ---- Stages 6.3-6.4 not implemented yet ----------------------------------
+    // ---- Stage 2: equipment HIL ---------------------------------------------
+    // Manager's brief step 4: "provide the complete list of equipment as a
+    // lookup, enabling the user to select." Pure HIL - no AI matching.
+    //
+    // First-call path: fetch the first page only (frontend handles "Load more"
+    // via /smoke/equipment-for directly - keeps the agent endpoint focused on
+    // workflow, not pagination).
+    //
+    // Re-entry path: scan to find the supplied code. We can't trust the code
+    // blindly because (a) forge protection and (b) we need departmentCode and
+    // locationCode from the equipment record for the work-request POST in
+    // stage 4. Frontend HAS the full record after the user picked, but routing
+    // it back through the canonical input would mean clients echo more than
+    // just the code - we'd rather re-fetch on the server.
+    let equipment: EquipmentOption
+    if (input.equipmentCode) {
+        const found = await findEamEquipmentByCode(
+            organization.code,
+            input.equipmentCode,
+            auth,
+        )
+        if (!found) {
+            console.log(
+                `[agent] stage=2 outcome=fail reason=no_equipment_match code=${input.equipmentCode}`
+            )
+            return {
+                kind: "fail",
+                reason: "no_equipment_match",
+                message: `Equipment ${input.equipmentCode} not found in organization ${organization.code}`,
+                resolved,
+            }
+        }
+        equipment = found
+        console.log(
+            `[agent] stage=2 outcome=preresolved_equipment code=${equipment.equipmentCode}`
+        )
+    } else {
+        const page = await getEamEquipmentForOrg(organization.code, auth, {
+            cursor: 0,
+            pageSize: 50,
+        })
+        if (page.records.length === 0) {
+            console.log(`[agent] stage=2 outcome=fail reason=no_equipment_match (empty org)`)
+            return {
+                kind: "fail",
+                reason: "no_equipment_match",
+                message: `No equipment found in organization ${organization.code}`,
+                resolved,
+            }
+        }
+        console.log(
+            `[agent] stage=2 outcome=pick_equipment candidates=${page.records.length} nextCursor=${page.nextCursor ?? "EOF"}`
+        )
+        return {
+            kind: "pick_equipment",
+            candidates: page.records,
+            nextCursor: page.nextCursor,
+            resolved,
+        }
+    }
+    resolved.equipment = equipment
+
+    // ---- Stage 6.4 not implemented yet --------------------------------------
     return {
         kind: "fail",
         reason: "not_implemented",
-        message: "Stages 6.3-6.4 (equipment, problem code, work-request creation) not implemented yet",
+        message: "Stage 6.4 (problem code, type, work-request creation) not implemented yet",
         resolved,
     }
 }
