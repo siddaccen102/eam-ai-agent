@@ -7,8 +7,16 @@ import {
     mapStatusToIntegrationCode
 } from "../errors/integrationError"
 import { randomUUID } from "node:crypto"
-import { EquipmentOption, OrganizationOption } from "../types/canonical"
-import { EamUserOrganizationRaw, EamPositionRaw, toUserOrganizationOption, toPositionEquipmentOption } from "./eamMappers"
+import { EquipmentOption, OrganizationOption, WorkRequestResult } from "../types/canonical"
+import {
+    EamUserOrganizationRaw,
+    EamPositionRaw,
+    EamWorkOrderCreateResponseRaw,
+    toUserOrganizationOption,
+    toPositionEquipmentOption,
+    toEamWorkOrderRequestBody,
+    toWorkRequestResult,
+} from "./eamMappers"
 
 // all constants used
 // Per-call timeout. EAM /positions typically responds in 1.8-3.5s but
@@ -413,4 +421,54 @@ export async function getEamEquipmentForOrg(
         exhausted,
         activeOnly,
     }
+}
+
+// createEamWorkRequest - canonical input + enrichment -> POST /workorders -> canonical result.
+//
+// The route layer is responsible for:
+//   1) shape/length validation,
+//   2) resolving problem-code description from findProblemCode(),
+//   3) resolving type description from findWorkRequestType(),
+//   4) sourcing requestedBy from req.auth.eamAuth.username (NEVER from the body).
+// This helper only sees enriched, vetted args. That keeps "unknown problem code"
+// errors out of the IntegrationError path: they surface as 400 VALIDATION_ERROR
+// at the route, not 502 UPSTREAM_ERROR from a confused EAM.
+//
+// Idempotency note: this POC does not implement an idempotency key. A user
+// double-clicking Submit will create two work requests. Production would
+// accept an Idempotency-Key header, cache key->JOBNUM with a short TTL, and
+// replay the cached result on retry. We've left the gap explicit rather
+// than building half a solution.
+//
+// Why we don't surface the EAM body shape in this signature: callers should
+// only know the canonical input. The vendor envelope (EamWorkOrderRequestBody)
+// is built by toEamWorkOrderRequestBody and never crosses out of this module.
+export async function createEamWorkRequest(
+    args: {
+        organizationCode: string
+        equipmentCode: string
+        departmentCode: string
+        locationCode?: string
+        problemCode: string
+        problemCodeDescription: string
+        typeCode: string
+        typeDescription: string
+        description: string
+        requestedBy: string
+    },
+    auth: EamCallAuth,
+): Promise<WorkRequestResult> {
+    const body = toEamWorkOrderRequestBody(args)
+
+    // The /workorders endpoint takes `organization=*` so the create succeeds
+    // regardless of the env-default org header (which is VTAT). The org the
+    // request actually targets is set by WORKORDERID.ORGANIZATIONID in the
+    // body - the request-level header is just for routing/auth context.
+    const response = await eamClient.post<EamWorkOrderCreateResponseRaw>(
+        "/workorders",
+        body,
+        { headers: withAuthHeader({ organization: "*" }, auth) },
+    )
+
+    return toWorkRequestResult(response.data, args)
 }

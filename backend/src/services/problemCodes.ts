@@ -41,3 +41,11 @@ const PROBLEM_CODES: ReadonlyArray<ProblemCodeOption> = [
 export function getProblemCodes(): ProblemCodeOption[] {
     return PROBLEM_CODES.map((c) => ({ ...c }))
 }
+
+// Lookup-by-code. Returns undefined when no match - the route layer treats
+// that as a 400 VALIDATION_ERROR (the user submitted a code that doesn't
+// exist in our static catalogue). The work-request mapper needs both code
+// and description for EAM's body, so this lookup hands back both.
+export function findProblemCode(code: string): ProblemCodeOption | undefined {
+    return PROBLEM_CODES.find((c) => c.code === code)
+}

@@ -15,6 +15,7 @@ export type EquipmentOption = {
     description: string         // EAM equipment description (POSITIONID.DESCRIPTION / ASSETID.DESCRIPTION)
     equipmentClass?: string
     departmentCode?: string     // EAM DEPARTMENTID.DEPARTMENTCODE - the equipment's owning department
+    locationCode?: string       // EAM LOCATIONID.LOCATIONCODE - physical site/area; needed for work-request body
     isActive: boolean
 }
 
@@ -31,6 +32,60 @@ export type OrganizationOption = {
 export type ProblemCodeOption = {
     code: string                // e.g., "P07"
     description: string         // e.g., "Leakage/ Pollution"
+}
+
+// Work-request type classification (CAPEX/OPEX category). Same static-lookup
+// pattern as ProblemCodeOption; sourced from docs/Work Request Type.xlsx.
+// EAM needs both code and description in the work-order body, so the lookup
+// has to be reversible (find-by-code) - the description alone won't do.
+export type WorkRequestTypeOption = {
+    code: string                // e.g., "BRKD"
+    description: string         // e.g., "Corrective Maintenance (OPEX)"
+}
+
+// Canonical input for creating a work request. Frontend assembles this from
+// the prior steps (org -> equipment -> problem code + type + description).
+// We deliberately accept CODES, not descriptions: descriptions are UI labels
+// looked up from the static lookups server-side. Sending codes keeps the
+// wire format short, type-safe, and resilient to future label/translation
+// changes.
+//
+// departmentCode and locationCode are taken from the equipment selection
+// rather than re-derived: the frontend already has the EquipmentOption from
+// /smoke/equipment-for, so passing them through avoids an extra EAM round-trip
+// per submit. The route trusts these values - if they don't match the
+// equipment, EAM will reject the create with a meaningful error.
+export type WorkRequestInput = {
+    organizationCode: string    // VTAT
+    equipmentCode: string       // AC.001.01.01
+    departmentCode: string      // MANUT-ARAT (from equipment.departmentCode)
+    // locationCode is optional for the POC: EAM /positions doesn't currently
+    // return LOCATIONID and Swagger confirms work-orders can be created
+    // without it. When we wire a location source later, callers can start
+    // sending it and the EAM body will include LOCATIONID automatically.
+    locationCode?: string       // BLD.01.AR
+    problemCode: string         // P01
+    typeCode: string            // BRKD
+    description: string         // free text, 1..200 chars
+}
+
+// What we return after a successful create. Echoes the relevant input fields
+// for traceability + the EAM-assigned job number + a server-side timestamp
+// (EAM doesn't echo a useful create timestamp). The status block is constant
+// for now (every fresh request lands in "Q"/"Registered" per tenant policy)
+// but we send it as a real field, not a comment, so downstream UI/logging
+// doesn't have to know that constant lives elsewhere.
+export type WorkRequestResult = {
+    jobNumber: string                                 // e.g., "12101874"
+    organizationCode: string
+    equipmentCode: string
+    problemCode: string
+    typeCode: string
+    description: string
+    status: { code: string; description: string }    // currently always { "Q", "Registered" }
+    requestedBy: string                               // session username
+    createdAt: string                                 // ISO-8601 server clock
+    upstreamMessage?: string                          // EAM's InfoAlert.Message for UX surfacing
 }
 
 // Result of the AI org-matcher. Discriminated union so consumers can branch
@@ -66,4 +121,6 @@ export type OrgResolution =
 //   OrganizationOption      ✅ done (EAM organization, name -> code resolution)
 //   OrgResolution           ✅ done (AI matcher result, discriminated union)
 //   ProblemCodeOption       ✅ done (static lookup; see services/problemCodes.ts)
-//   WorkRequestResult       (EAM work order create response)
+//   WorkRequestTypeOption   ✅ done (static lookup; see services/workRequestTypes.ts)
+//   WorkRequestInput        ✅ done (canonical create-work-request input)
+//   WorkRequestResult       ✅ done (EAM work order create response, canonical)

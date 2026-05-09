@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express"
-import { getEamCollection, getEamEquipmentForOrg, getEamUserOrganizations } from "../services/eamClient"
+import { createEamWorkRequest, getEamCollection, getEamEquipmentForOrg, getEamUserOrganizations } from "../services/eamClient"
 import { toEquipmentOption, EamAssetRaw, EamPositionRaw } from "../services/eamMappers"
-import { getProblemCodes } from "../services/problemCodes"
+import { findProblemCode, getProblemCodes } from "../services/problemCodes"
+import { findWorkRequestType, getWorkRequestTypes } from "../services/workRequestTypes"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -200,6 +201,130 @@ router.get("/smoke/problem-codes", requireAuth, async (_req: Request, res: Respo
         records,
         total: records.length,
     })
+})
+
+// GET /smoke/work-request-types
+// Same static-lookup pattern as /smoke/problem-codes; backed by
+// services/workRequestTypes.ts mirrored from docs/Work Request Type.xlsx.
+// Frontend uses this to populate the "type" dropdown on the work-request form.
+router.get("/smoke/work-request-types", requireAuth, async (_req: Request, res: Response) => {
+    const records = getWorkRequestTypes()
+    return res.send({
+        status: "ok",
+        provider: "static",
+        records,
+        total: records.length,
+    })
+})
+
+// POST /smoke/work-request
+// First write endpoint in the project. Validates the canonical input shape,
+// resolves descriptions for problem code + type from the static lookups,
+// injects requestedBy from the session (NEVER from the body), and forwards
+// to EAM via createEamWorkRequest. EAM-assigned JOBNUM comes back in the
+// canonical WorkRequestResult.
+//
+// Validation deliberately lives in this route (not in a shared validator
+// module) - it's small enough that abstracting it would just hide what the
+// rules actually are. If we add more write routes later we'll factor it.
+const MAX_DESCRIPTION_LEN = 200
+
+router.post("/smoke/work-request", requireAuth, async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>
+
+    // String-or-default-empty pattern (vs. type-narrowing helpers): keeps the
+    // missing-field 400s simple to construct without a per-field utility.
+    const organizationCode = typeof body.organizationCode === "string" ? body.organizationCode.trim() : ""
+    const equipmentCode = typeof body.equipmentCode === "string" ? body.equipmentCode.trim() : ""
+    const departmentCode = typeof body.departmentCode === "string" ? body.departmentCode.trim() : ""
+    // locationCode is optional for the POC: EAM /positions doesn't return
+    // LOCATIONID and Swagger confirms work-orders create without it. The
+    // mapper omits the LOCATIONID block entirely when this is empty.
+    const locationCode = typeof body.locationCode === "string" ? body.locationCode.trim() : ""
+    const problemCode = typeof body.problemCode === "string" ? body.problemCode.trim() : ""
+    const typeCode = typeof body.typeCode === "string" ? body.typeCode.trim() : ""
+    const description = typeof body.description === "string" ? body.description.trim() : ""
+
+    // Required-fields check. We list every missing field rather than
+    // short-circuiting on the first - a frontend will get one round-trip's
+    // worth of feedback instead of N round-trips for N missing fields.
+    const missing: string[] = []
+    if (!organizationCode) missing.push("organizationCode")
+    if (!equipmentCode) missing.push("equipmentCode")
+    if (!departmentCode) missing.push("departmentCode")
+    if (!problemCode) missing.push("problemCode")
+    if (!typeCode) missing.push("typeCode")
+    if (!description) missing.push("description")
+    if (missing.length > 0) {
+        return res.status(400).send({
+            code: "VALIDATION_ERROR",
+            message: `Missing required field(s): ${missing.join(", ")}`,
+            missing,
+        })
+    }
+
+    if (description.length > MAX_DESCRIPTION_LEN) {
+        return res.status(400).send({
+            code: "VALIDATION_ERROR",
+            message: `description exceeds ${MAX_DESCRIPTION_LEN} chars (got ${description.length})`,
+        })
+    }
+
+    // Lookup-by-code from the static catalogues. Unknown codes are 400, not
+    // 502 - they're caller errors, not upstream failures.
+    const problem = findProblemCode(problemCode)
+    if (!problem) {
+        return res.status(400).send({
+            code: "VALIDATION_ERROR",
+            message: `Unknown problemCode: ${problemCode}`,
+        })
+    }
+    const wrType = findWorkRequestType(typeCode)
+    if (!wrType) {
+        return res.status(400).send({
+            code: "VALIDATION_ERROR",
+            message: `Unknown typeCode: ${typeCode}`,
+        })
+    }
+
+    try {
+        const result = await createEamWorkRequest(
+            {
+                organizationCode,
+                equipmentCode,
+                departmentCode,
+                // Pass locationCode only when the caller provided one; the
+                // mapper drops the LOCATIONID block from the body when empty.
+                ...(locationCode ? { locationCode } : {}),
+                problemCode,
+                problemCodeDescription: problem.description,
+                typeCode,
+                typeDescription: wrType.description,
+                description,
+                // Source-of-truth for "who is creating this": session, not body.
+                requestedBy: req.auth!.eamAuth.username,
+            },
+            req.auth!.eamAuth,
+        )
+        return res.send({
+            status: "ok",
+            provider: "eam",
+            result,
+        })
+    } catch (err) {
+        if (err instanceof IntegrationError) {
+            return res.status(integrationErrorHttpStatus(err)).send(err.toJSON())
+        }
+        // toWorkRequestResult throws a plain Error if the envelope is malformed.
+        // Treat that as 502 upstream-shape failure rather than 500 internal -
+        // the bug is in EAM's response or our model of it, not in our request
+        // handling.
+        const message = err instanceof Error ? err.message : "unknown error"
+        return res.status(502).send({
+            code: "UPSTREAM_CONTRACT_ERROR",
+            message,
+        })
+    }
 })
 
 export default router
