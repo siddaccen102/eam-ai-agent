@@ -219,6 +219,8 @@ export type AgentRunResult =
               | "user_inactive"
               | "no_org_match"
               | "no_equipment_match"
+              | "no_problem_code_match"
+              | "no_type_match"
               | "internal_error"
           message?: string
           resolved: AgentRunResolved

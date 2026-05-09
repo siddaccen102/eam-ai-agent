@@ -4,24 +4,31 @@ import {
     AgentRunResolved,
     EquipmentOption,
     OrganizationOption,
+    ProblemCodeOption,
     ValidatedUser,
+    WorkRequestTypeOption,
 } from "../types/canonical"
 import {
     EamCallAuth,
+    createEamWorkRequest,
     findEamEquipmentByCode,
     getEamEquipmentForOrg,
     getEamUserOrganizations,
 } from "./eamClient"
 import { getWorkdayUserByEmail } from "./workdayClient"
 import { resolveOrg } from "./orgMatcher"
+import { findProblemCode, getProblemCodes } from "./problemCodes"
+import { findWorkRequestType, getWorkRequestTypes } from "./workRequestTypes"
 import { IntegrationError } from "../errors/integrationError"
 
 // runAgent - the single entry point that stitches every integration into one
-// typed contract. Stages:
-//   1) Workday user lookup -> ValidatedUser           (Mini 6.2 - this scrim)
-//   2) EAM user-orgs + AI matcher -> organization     (Mini 6.2 - this scrim)
-//   3) Equipment HIL pick                             (Mini 6.3)
-//   4) Problem-code HIL pick + work-request create    (Mini 6.4)
+// typed contract. Stages, in order:
+//   1a) Workday user lookup -> ValidatedUser          (Mini 6.2)
+//   1b) EAM user-orgs + AI matcher -> organization    (Mini 6.2)
+//   2)  Equipment HIL pick                            (Mini 6.3)
+//   3)  Problem-code HIL pick                         (Mini 6.4)
+//   4)  Type HIL pick                                 (Mini 6.4)
+//   5)  Work-request create (POST /workorders)        (Mini 6.4)
 //
 // Each stage skips itself if its result is already supplied on the input
 // (the re-entry pattern documented in canonical.ts).
@@ -207,11 +214,107 @@ export async function runAgent(
     }
     resolved.equipment = equipment
 
-    // ---- Stage 6.4 not implemented yet --------------------------------------
+    // ---- Stage 3: problem-code HIL ------------------------------------------
+    // Static catalogue (15 codes) sourced from docs/Problem Codes.xlsx. We
+    // intentionally do NOT AI-suggest a default - "AC leaking" -> P07 is
+    // probable but "AC not cooling" -> P10 vs P05 is a user judgment call.
+    // Asking the user keeps the result honest and matches the manager's brief.
+    let problem: ProblemCodeOption
+    if (input.problemCode) {
+        const found = findProblemCode(input.problemCode)
+        if (!found) {
+            console.log(`[agent] stage=3 outcome=fail reason=no_problem_code_match code=${input.problemCode}`)
+            return {
+                kind: "fail",
+                reason: "no_problem_code_match",
+                message: `Unknown problemCode: ${input.problemCode}`,
+                resolved,
+            }
+        }
+        problem = found
+        console.log(`[agent] stage=3 outcome=preresolved_problem_code code=${problem.code}`)
+    } else {
+        const candidates = getProblemCodes()
+        console.log(`[agent] stage=3 outcome=pick_problem_code candidates=${candidates.length}`)
+        return {
+            kind: "pick_problem_code",
+            candidates,
+            resolved,
+        }
+    }
+    resolved.problemCode = problem
+
+    // ---- Stage 4: type HIL --------------------------------------------------
+    // Static catalogue (6 codes: ADAP/BRKD/DAMA/MODI/WOOI/WOPS) from
+    // docs/Work Request Type.xlsx. Same shape as stage 3.
+    let workRequestType: WorkRequestTypeOption
+    if (input.typeCode) {
+        const found = findWorkRequestType(input.typeCode)
+        if (!found) {
+            console.log(`[agent] stage=4 outcome=fail reason=no_type_match code=${input.typeCode}`)
+            return {
+                kind: "fail",
+                reason: "no_type_match",
+                message: `Unknown typeCode: ${input.typeCode}`,
+                resolved,
+            }
+        }
+        workRequestType = found
+        console.log(`[agent] stage=4 outcome=preresolved_type code=${workRequestType.code}`)
+    } else {
+        const candidates = getWorkRequestTypes()
+        console.log(`[agent] stage=4 outcome=pick_type candidates=${candidates.length}`)
+        return {
+            kind: "pick_type",
+            candidates,
+            resolved,
+        }
+    }
+    resolved.type = workRequestType
+
+    // ---- Stage 5: work-request create ---------------------------------------
+    // Defensive: equipment.departmentCode is optional in EquipmentOption but
+    // required by createEamWorkRequest. Every /positions record we've seen
+    // carries DEPARTMENTID, so this guard never fires in practice - but if a
+    // record ever comes back without one, we fail with a typed reason rather
+    // than constructing a bogus EAM body.
+    if (!equipment.departmentCode) {
+        console.log(
+            `[agent] stage=5 outcome=fail reason=internal_error missing_departmentCode equipment=${equipment.equipmentCode}`
+        )
+        return {
+            kind: "fail",
+            reason: "internal_error",
+            message: `Equipment ${equipment.equipmentCode} has no departmentCode; cannot file work request`,
+            resolved,
+        }
+    }
+
+    // requestedBy = the EAM username from the session (NOT email, NOT any input
+    // field). EAM stores this in CREATEDBY.USERCODE and uses it as the audit
+    // identity. The session is the single source of truth for "who is doing this".
+    // Errors from createEamWorkRequest bubble as IntegrationError; the route's
+    // existing handler maps them to 5xx responses (infra failures stay 5xx).
+    const workRequest = await createEamWorkRequest(
+        {
+            organizationCode: organization.code,
+            equipmentCode: equipment.equipmentCode,
+            departmentCode: equipment.departmentCode,
+            ...(equipment.locationCode ? { locationCode: equipment.locationCode } : {}),
+            problemCode: problem.code,
+            problemCodeDescription: problem.description,
+            typeCode: workRequestType.code,
+            typeDescription: workRequestType.description,
+            description: input.description,
+            requestedBy: auth.username,
+        },
+        auth,
+    )
+
+    console.log(`[agent] stage=5 outcome=success jobNumber=${workRequest.jobNumber}`)
     return {
-        kind: "fail",
-        reason: "not_implemented",
-        message: "Stage 6.4 (problem code, type, work-request creation) not implemented yet",
+        kind: "success",
+        workRequest,
         resolved,
     }
 }
