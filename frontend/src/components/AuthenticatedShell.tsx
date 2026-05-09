@@ -1,9 +1,10 @@
 import { useSession } from "../auth/useSession"
+import { AgentChat } from "./AgentChat"
 
-// The shell that holds the agent flow once the user is authenticated.
-// Mini 7.1 ships an empty main area; Mini 7.2 fills it with the chat-style
-// agent flow. Everything outside the <main> below is "chrome" that stays
-// constant across all subsequent scrims (header, logout, branding).
+// The shell that holds the agent flow once the user is authenticated. The
+// header (chrome) is constant across all of Mini 7; the main area hosts the
+// agent chat. Subsequent scrims (7.5 side panel, 7.7 polish) layer on top
+// without changing this file.
 export function AuthenticatedShell() {
     const { session, logout } = useSession()
 
@@ -30,12 +31,8 @@ export function AuthenticatedShell() {
                 </div>
             </header>
 
-            <main className="flex-1 mx-auto w-full max-w-3xl px-6 py-12">
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
-                    <p className="text-sm text-slate-500">
-                        Agent flow lands here in Mini 7.2.
-                    </p>
-                </div>
+            <main className="flex-1 mx-auto w-full max-w-3xl px-6 py-8">
+                <AgentChat />
             </main>
         </div>
     )

@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx"],"version":"6.0.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/agent.ts","./src/api/auth.ts","./src/api/client.ts","./src/auth/sessioncontext.tsx","./src/auth/usesession.ts","./src/components/agentchat.tsx","./src/components/authenticatedshell.tsx","./src/components/loginform.tsx","./src/types/canonical.ts"],"version":"6.0.3"}

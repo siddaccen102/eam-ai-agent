@@ -16,7 +16,13 @@ const BEARER_RE = /^Bearer\s+(.+)$/i
 // is one extra round-trip per login, which is fair insurance for UX clarity.
 router.post("/login", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as { eamUsername?: unknown; eamPassword?: unknown }
-    const eamUsername = typeof body.eamUsername === "string" ? body.eamUsername.trim() : ""
+    // Normalize username to uppercase. EAM's Basic auth is case-insensitive so
+    // login works either way, but path parameters like /usersetup/{user}/...
+    // ARE case-sensitive: EAM returns a 200 with no DATARECORD for an unknown
+    // (lowercased) user, which surfaces downstream as CONTRACT_MAPPING_ERROR.
+    // Normalizing once here keeps every helper (and every URL path) on the
+    // canonical form without each caller having to remember.
+    const eamUsername = typeof body.eamUsername === "string" ? body.eamUsername.trim().toUpperCase() : ""
     const eamPassword = typeof body.eamPassword === "string" ? body.eamPassword : ""
 
     if (!eamUsername || !eamPassword) {
