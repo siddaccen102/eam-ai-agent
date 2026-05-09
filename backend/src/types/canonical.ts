@@ -23,6 +23,16 @@ export type OrganizationOption = {
     description: string         // EAM DESCRIPTION, e.g., "Vopak Brasil S.A. - Terminal Aratu"
 }
 
+// What's-wrong classification on a work request. In this EAM tenant, problem
+// codes are a fixed enumeration (not org- or class-scoped) sourced from
+// docs/Problem Codes.xlsx. The DTO is the same shape we'll return if/when EAM
+// exposes a problem-code REST endpoint, so swapping the data source later
+// won't ripple to consumers.
+export type ProblemCodeOption = {
+    code: string                // e.g., "P07"
+    description: string         // e.g., "Leakage/ Pollution"
+}
+
 // Result of the AI org-matcher. Discriminated union so consumers can branch
 // on `kind` and the compiler narrows the type accordingly:
 //   - "auto" : top match >= 0.9 confidence; no user input needed
@@ -55,5 +65,5 @@ export type OrgResolution =
 //   ValidatedUser           ✅ done
 //   OrganizationOption      ✅ done (EAM organization, name -> code resolution)
 //   OrgResolution           ✅ done (AI matcher result, discriminated union)
-//   ProblemCodeOption       (EAM problem code)
+//   ProblemCodeOption       ✅ done (static lookup; see services/problemCodes.ts)
 //   WorkRequestResult       (EAM work order create response)

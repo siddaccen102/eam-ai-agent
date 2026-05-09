@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express"
 import { getEamCollection, getEamEquipmentForOrg, getEamUserOrganizations } from "../services/eamClient"
 import { toEquipmentOption, EamAssetRaw, EamPositionRaw } from "../services/eamMappers"
+import { getProblemCodes } from "../services/problemCodes"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -178,6 +179,27 @@ router.get("/smoke/positions-raw", requireAuth, async (req: Request, res: Respon
             message: "Unexpected error during EAM positions-raw smoke test",
         })
     }
+})
+
+// GET /smoke/problem-codes
+// Returns the canonical ProblemCodeOption[] for the work-request "what's wrong"
+// dropdown. Backed by a static lookup (services/problemCodes.ts) sourced from
+// docs/Problem Codes.xlsx - in this EAM tenant the codes are a fixed
+// enumeration, not a per-org/per-class lookup, so a static module is the
+// honest shape. If EAM later exposes a tenant-scoped problem-code endpoint
+// we swap the service implementation; the route stays unchanged.
+//
+// Gated with requireAuth for consistency with the rest of the API surface
+// (the actual work-request flow requires login anyway). No EAM round-trip,
+// so the response is instant and there's no upstream-error path to handle.
+router.get("/smoke/problem-codes", requireAuth, async (_req: Request, res: Response) => {
+    const records = getProblemCodes()
+    return res.send({
+        status: "ok",
+        provider: "static",
+        records,
+        total: records.length,
+    })
 })
 
 export default router
