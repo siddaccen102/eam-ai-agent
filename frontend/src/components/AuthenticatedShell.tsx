@@ -31,7 +31,7 @@ export function AuthenticatedShell() {
                 </div>
             </header>
 
-            <main className="flex-1 mx-auto w-full max-w-3xl px-6 py-8">
+            <main className="flex-1 mx-auto w-full max-w-6xl px-6 py-8">
                 <AgentChat />
             </main>
         </div>
