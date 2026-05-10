@@ -261,71 +261,36 @@ function BotBubble(props: {
             )}
 
             {result.kind === "pick_org" && (
-                <PickList
-                    prompt="Pick the EAM organization for this work request:"
-                    items={result.candidates.map((c) => ({
-                        code: c.code,
-                        primary: c.code,
-                        secondary: c.description,
-                        label: `${c.code} — ${c.description}`,
-                    }))}
+                <PickOrg
+                    candidates={result.candidates}
+                    topConfidence={result.topConfidence}
                     interactive={interactive}
-                    onClick={(code, label) =>
-                        void onPick("organizationCode", code, label)
-                    }
+                    onPick={onPick}
                 />
             )}
 
             {result.kind === "pick_equipment" && (
-                <PickList
-                    prompt="Pick the equipment:"
-                    items={result.candidates.map((c) => ({
-                        code: c.equipmentCode,
-                        primary: c.equipmentCode,
-                        secondary: c.description,
-                        label: `${c.equipmentCode} — ${c.description}`,
-                    }))}
+                <PickEquipment
+                    candidates={result.candidates}
+                    nextCursor={result.nextCursor}
                     interactive={interactive}
-                    onClick={(code, label) =>
-                        void onPick("equipmentCode", code, label)
-                    }
-                    footerNote={
-                        result.nextCursor !== null
-                            ? `Showing the first page. (More pages handled in Mini 7.4.)`
-                            : undefined
-                    }
+                    onPick={onPick}
                 />
             )}
 
             {result.kind === "pick_problem_code" && (
-                <PickList
-                    prompt="What's the problem?"
-                    items={result.candidates.map((c) => ({
-                        code: c.code,
-                        primary: c.code,
-                        secondary: c.description,
-                        label: `${c.code} — ${c.description}`,
-                    }))}
+                <PickProblemCode
+                    candidates={result.candidates}
                     interactive={interactive}
-                    onClick={(code, label) =>
-                        void onPick("problemCode", code, label)
-                    }
+                    onPick={onPick}
                 />
             )}
 
             {result.kind === "pick_type" && (
-                <PickList
-                    prompt="Work request type:"
-                    items={result.candidates.map((c) => ({
-                        code: c.code,
-                        primary: c.code,
-                        secondary: c.description,
-                        label: `${c.code} — ${c.description}`,
-                    }))}
+                <PickType
+                    candidates={result.candidates}
                     interactive={interactive}
-                    onClick={(code, label) =>
-                        void onPick("typeCode", code, label)
-                    }
+                    onPick={onPick}
                 />
             )}
 
@@ -459,42 +424,216 @@ type PickItem = {
     label: string           // human-readable used in the user-turn echo
 }
 
+// PickList - the button-list primitive. Each pick variant component (PickOrg,
+// PickEquipment, PickProblemCode, PickType) renders its own prompt/banner/
+// search/empty-state above this and drops in the same clickable list.
+// Keyboard nav: Tab moves between items; Enter triggers (default <button> behavior).
 function PickList({
-    prompt,
     items,
     interactive,
     onClick,
-    footerNote,
 }: {
-    prompt: string
     items: PickItem[]
     interactive: boolean
     onClick: (code: string, label: string) => void
-    footerNote?: string
+}) {
+    return (
+        <ul className="space-y-1">
+            {items.map((item) => (
+                <li key={item.code}>
+                    <button
+                        type="button"
+                        onClick={() => onClick(item.code, item.label)}
+                        disabled={!interactive}
+                        className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-sm transition-colors hover:border-slate-400 hover:bg-slate-100 focus:border-slate-500 focus:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900/20 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-200 disabled:hover:bg-white"
+                    >
+                        <span className="font-mono font-medium text-slate-900">
+                            {item.primary}
+                        </span>
+                        <span className="ml-2 text-slate-600">{item.secondary}</span>
+                    </button>
+                </li>
+            ))}
+        </ul>
+    )
+}
+
+// PickOrg - candidate list + a confidence banner. The AI matcher's topConfidence
+// is the only place "% confident" makes sense (problem codes / types / equipment
+// are static catalogues, no scoring). Showing the percentage tells the user WHY
+// they're being asked to pick: "the AI was unsure, please confirm."
+function PickOrg({
+    candidates,
+    topConfidence,
+    interactive,
+    onPick,
+}: {
+    candidates: OrganizationOption[]
+    topConfidence: number
+    interactive: boolean
+    onPick: (field: PickField, code: string, label: string) => Promise<void>
+}) {
+    const pct = Math.round(topConfidence * 100)
+    return (
+        <div>
+            <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                AI matcher was {pct}% confident — please confirm the right organization.
+            </div>
+            <p className="text-sm text-slate-700">
+                Pick the EAM organization for this work request:
+            </p>
+            <div className="mt-3">
+                <PickList
+                    items={candidates.map((c) => ({
+                        code: c.code,
+                        primary: c.code,
+                        secondary: c.description,
+                        label: `${c.code} — ${c.description}`,
+                    }))}
+                    interactive={interactive}
+                    onClick={(code, label) =>
+                        void onPick("organizationCode", code, label)
+                    }
+                />
+            </div>
+        </div>
+    )
+}
+
+// PickEquipment - the only pick variant with a search filter. 50 items per page
+// is enough to need search; <16 (problem codes / types) isn't. Filter is local
+// state to this component - it resets when the bubble unmounts on next HIL.
+// Mini 7.4 will add a "Load more" button next to the search using nextCursor.
+function PickEquipment({
+    candidates,
+    nextCursor,
+    interactive,
+    onPick,
+}: {
+    candidates: EquipmentOption[]
+    nextCursor: number | null
+    interactive: boolean
+    onPick: (field: PickField, code: string, label: string) => Promise<void>
+}) {
+    const [query, setQuery] = useState("")
+    const q = query.trim().toLowerCase()
+    const filtered =
+        q.length === 0
+            ? candidates
+            : candidates.filter(
+                  (c) =>
+                      c.equipmentCode.toLowerCase().includes(q) ||
+                      c.description.toLowerCase().includes(q),
+              )
+    return (
+        <div>
+            <p className="text-sm text-slate-700">Pick the equipment:</p>
+            <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                disabled={!interactive}
+                placeholder="Filter by code or description"
+                aria-label="Filter equipment"
+                className="mt-3 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
+            />
+            <p className="mt-2 text-xs text-slate-500">
+                Showing {filtered.length} of {candidates.length}
+                {q.length > 0 ? ` matching "${query}"` : ""}
+            </p>
+            {filtered.length === 0 ? (
+                <div className="mt-3 rounded-md border border-dashed border-slate-300 px-4 py-6 text-center">
+                    <p className="text-sm text-slate-500">
+                        No equipment matches "
+                        <span className="font-mono">{query}</span>".
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                        Try a different code or keyword.
+                    </p>
+                </div>
+            ) : (
+                <div className="mt-3">
+                    <PickList
+                        items={filtered.map((c) => ({
+                            code: c.equipmentCode,
+                            primary: c.equipmentCode,
+                            secondary: c.description,
+                            label: `${c.equipmentCode} — ${c.description}`,
+                        }))}
+                        interactive={interactive}
+                        onClick={(code, label) =>
+                            void onPick("equipmentCode", code, label)
+                        }
+                    />
+                </div>
+            )}
+            {nextCursor !== null && (
+                <p className="mt-3 text-xs italic text-slate-500">
+                    Showing the first page. (More pages handled in Mini 7.4.)
+                </p>
+            )}
+        </div>
+    )
+}
+
+// PickProblemCode - 15 fixed entries; no search needed. Just prompt + list.
+function PickProblemCode({
+    candidates,
+    interactive,
+    onPick,
+}: {
+    candidates: ProblemCodeOption[]
+    interactive: boolean
+    onPick: (field: PickField, code: string, label: string) => Promise<void>
 }) {
     return (
         <div>
-            <p className="text-sm text-slate-700">{prompt}</p>
-            <ul className="mt-3 space-y-1">
-                {items.map((item) => (
-                    <li key={item.code}>
-                        <button
-                            type="button"
-                            onClick={() => onClick(item.code, item.label)}
-                            disabled={!interactive}
-                            className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-sm hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-white"
-                        >
-                            <span className="font-mono font-medium text-slate-900">
-                                {item.primary}
-                            </span>
-                            <span className="ml-2 text-slate-600">{item.secondary}</span>
-                        </button>
-                    </li>
-                ))}
-            </ul>
-            {footerNote && (
-                <p className="mt-2 text-xs italic text-slate-500">{footerNote}</p>
-            )}
+            <p className="text-sm text-slate-700">What's the problem?</p>
+            <div className="mt-3">
+                <PickList
+                    items={candidates.map((c) => ({
+                        code: c.code,
+                        primary: c.code,
+                        secondary: c.description,
+                        label: `${c.code} — ${c.description}`,
+                    }))}
+                    interactive={interactive}
+                    onClick={(code, label) =>
+                        void onPick("problemCode", code, label)
+                    }
+                />
+            </div>
+        </div>
+    )
+}
+
+// PickType - 6 fixed entries; same shape as PickProblemCode.
+function PickType({
+    candidates,
+    interactive,
+    onPick,
+}: {
+    candidates: WorkRequestTypeOption[]
+    interactive: boolean
+    onPick: (field: PickField, code: string, label: string) => Promise<void>
+}) {
+    return (
+        <div>
+            <p className="text-sm text-slate-700">Work request type:</p>
+            <div className="mt-3">
+                <PickList
+                    items={candidates.map((c) => ({
+                        code: c.code,
+                        primary: c.code,
+                        secondary: c.description,
+                        label: `${c.code} — ${c.description}`,
+                    }))}
+                    interactive={interactive}
+                    onClick={(code, label) =>
+                        void onPick("typeCode", code, label)
+                    }
+                />
+            </div>
         </div>
     )
 }
