@@ -10,13 +10,19 @@ const sessions = new Map<string, AuthContext>()
 const DEFAULT_TTL_MS = 30 * 60 * 1000 // 30 minutes idle
 
 export function createSession(
-    eamAuth: { username: string; password: string },
+    args: {
+        eamAuth: { username: string; password: string }
+        email: string
+        displayName: string
+    },
     ttlMs: number = DEFAULT_TTL_MS,
 ): AuthContext {
     const sessionId = randomUUID()
     const ctx: AuthContext = {
         sessionId,
-        eamAuth,
+        eamAuth: args.eamAuth,
+        email: args.email,
+        displayName: args.displayName,
         expiresAt: Date.now() + ttlMs,
     }
     sessions.set(sessionId, ctx)

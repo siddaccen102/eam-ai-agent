@@ -27,6 +27,11 @@ function readStored(): Session | null {
         if (typeof parsed?.sessionId !== "string") return null
         if (typeof parsed?.expiresAt !== "number") return null
         if (typeof parsed?.eamUsername !== "string") return null
+        // email + displayName are required as of the email-based login change.
+        // Older stored sessions (from before the change) lack them - treat as
+        // invalid and force re-login. Cheap to detect, no migration needed.
+        if (typeof parsed?.email !== "string") return null
+        if (typeof parsed?.displayName !== "string") return null
         return parsed as Session
     } catch {
         // Corrupted storage. Clear and start fresh.

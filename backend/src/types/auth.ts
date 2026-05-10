@@ -8,5 +8,11 @@
 export type AuthContext = {
     sessionId: string
     eamAuth: { username: string; password: string }
+    // Captured at login time from Workday. The agent flow uses `email` to
+    // identify "who's filing" without re-prompting; UI surfaces displayName.
+    // EAM username is derived from email's local part on login (uppercased)
+    // so the session keeps it in canonical EAM form.
+    email: string
+    displayName: string
     expiresAt: number
 }

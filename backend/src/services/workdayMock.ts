@@ -43,6 +43,17 @@ const MOCK_USERS: Record<string, ValidatedUser> = {
         company: "Vopak Brasil SA",
         isActive: false,
     },
+    // Demo-fitted: location/company point at Aratu so the AI org-matcher
+    // resolves to VTAT (the org Rashid's EAM account actually has access to).
+    // When real Workday is wired up, this entry can go.
+    "rashid.siddiqui@vopak.com": {
+        userId: "wd-005",
+        email: "rashid.siddiqui@vopak.com",
+        displayName: "Rashid Siddiqui",
+        location: "Aratu Terminal",
+        company: "Vopak Brasil SA",
+        isActive: true,
+    },
 }
 
 export async function mockGetWorkdayUserByEmail(email: string): Promise<ValidatedUser> {

@@ -20,7 +20,7 @@ export function AuthenticatedShell() {
                 <div className="flex items-center gap-3">
                     <span className="text-sm text-slate-600">
                         Logged in as{" "}
-                        <strong className="text-slate-900">{session.eamUsername}</strong>
+                        <strong className="text-slate-900">{session.displayName}</strong>
                     </span>
                     <button
                         onClick={() => void logout()}

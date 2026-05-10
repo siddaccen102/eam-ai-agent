@@ -60,7 +60,10 @@ function buildReentryInput(
 
 export function AgentChat() {
     const { session } = useSession()
-    const [email, setEmail] = useState("")
+    // The user already proved their identity at login - email lives on the
+    // session, not as a form field. Asking again here would be friction
+    // without value. The agent endpoint's `email` field is sourced from
+    // session.email at every call.
     const [description, setDescription] = useState("")
     const [transcript, setTranscript] = useState<Turn[]>([])
     const [pending, setPending] = useState(false)
@@ -78,10 +81,14 @@ export function AgentChat() {
         if (!session) return
         setPending(true)
         setApiError(null)
-        const userText = `${email} — "${description}"`
-        setTranscript((prev) => [...prev, { speaker: "user", text: userText }])
+        // The user-turn shows what they typed; identity is already implied by
+        // the chat being authenticated. No need to echo their email.
+        setTranscript((prev) => [...prev, { speaker: "user", text: description }])
         try {
-            const result = await runAgent({ email, description }, session.sessionId)
+            const result = await runAgent(
+                { email: session.email, description },
+                session.sessionId,
+            )
             setTranscript((prev) => [...prev, { speaker: "bot", result }])
         } catch (err) {
             setApiError(toApiError(err))
@@ -104,7 +111,7 @@ export function AgentChat() {
         ])
         try {
             const input = buildReentryInput(
-                email,
+                session.email,
                 description,
                 lastBotResult,
                 field,
@@ -120,7 +127,6 @@ export function AgentChat() {
     }
 
     function handleReset() {
-        setEmail("")
         setDescription("")
         setTranscript([])
         setApiError(null)
@@ -128,7 +134,7 @@ export function AgentChat() {
 
     return (
         <div className="flex flex-col gap-4">
-            <BotGreeting username={session.eamUsername} />
+            <BotGreeting displayName={session.displayName} />
 
             {transcript.map((turn, i) =>
                 turn.speaker === "user" ? (
@@ -150,8 +156,6 @@ export function AgentChat() {
 
             {showInitialForm && (
                 <InitialForm
-                    email={email}
-                    setEmail={setEmail}
                     description={description}
                     setDescription={setDescription}
                     onSubmit={handleStart}
@@ -171,12 +175,12 @@ export function AgentChat() {
 
 // ----- Subcomponents (kept in-file for Mini 7.2; 7.3+ may extract picks) -----
 
-function BotGreeting({ username }: { username: string }) {
+function BotGreeting({ displayName }: { displayName: string }) {
     return (
         <BotShell>
             <p className="text-sm text-slate-700">
-                Hi <strong className="text-slate-900">{username}</strong>. Tell me your
-                Vopak email and what's wrong, and I'll file a work request in EAM.
+                Hi <strong className="text-slate-900">{displayName}</strong>. Tell me
+                what's wrong and I'll file a work request in EAM for you.
             </p>
         </BotShell>
     )
@@ -496,65 +500,44 @@ function PickList({
 }
 
 function InitialForm({
-    email,
-    setEmail,
     description,
     setDescription,
     onSubmit,
     pending,
 }: {
-    email: string
-    setEmail: (v: string) => void
     description: string
     setDescription: (v: string) => void
     onSubmit: (e: FormEvent<HTMLFormElement>) => void
     pending: boolean
 }) {
-    const canSubmit = !pending && email.length > 0 && description.length > 0
+    const canSubmit = !pending && description.length > 0
     return (
         <form
             onSubmit={onSubmit}
             className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
         >
-            <div className="space-y-3">
-                <label className="block">
-                    <span className="block text-sm font-medium text-slate-700">
-                        Vopak email
+            <label className="block">
+                <span className="flex items-baseline justify-between">
+                    <span className="text-sm font-medium text-slate-700">
+                        What's wrong?
                     </span>
-                    <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        disabled={pending}
-                        autoFocus
-                        required
-                        autoComplete="email"
-                        placeholder="leticia.sales@vopak.com"
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
-                    />
-                </label>
-                <label className="block">
-                    <span className="flex items-baseline justify-between">
-                        <span className="text-sm font-medium text-slate-700">
-                            What's wrong?
-                        </span>
-                        <span className="text-xs text-slate-400">
-                            {description.length}/{MAX_DESCRIPTION_LEN}
-                        </span>
+                    <span className="text-xs text-slate-400">
+                        {description.length}/{MAX_DESCRIPTION_LEN}
                     </span>
-                    <textarea
-                        value={description}
-                        onChange={(e) =>
-                            setDescription(e.target.value.slice(0, MAX_DESCRIPTION_LEN))
-                        }
-                        disabled={pending}
-                        required
-                        rows={3}
-                        placeholder="AC in reception is leaking water on the floor"
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
-                    />
-                </label>
-            </div>
+                </span>
+                <textarea
+                    value={description}
+                    onChange={(e) =>
+                        setDescription(e.target.value.slice(0, MAX_DESCRIPTION_LEN))
+                    }
+                    disabled={pending}
+                    autoFocus
+                    required
+                    rows={3}
+                    placeholder="Describe the issue (e.g. equipment leaking, motor not starting, valve stuck)"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
+                />
+            </label>
             <button
                 type="submit"
                 disabled={!canSubmit}

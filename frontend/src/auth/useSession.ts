@@ -1,6 +1,6 @@
 import { useContext } from "react"
 import { SessionContext } from "./SessionContext"
-import { loginEam, logoutEam } from "../api/auth"
+import { login as loginApi, logoutEam } from "../api/auth"
 
 // useSession - what every authenticated component reaches for. Returns the
 // current session (or null), the status (checking/anonymous/authenticated),
@@ -16,8 +16,8 @@ export function useSession() {
         throw new Error("useSession must be used inside <SessionProvider>")
     }
 
-    async function login(eamUsername: string, eamPassword: string) {
-        const fresh = await loginEam(eamUsername, eamPassword)
+    async function login(email: string, eamPassword: string) {
+        const fresh = await loginApi(email, eamPassword)
         ctx!.setSession(fresh)
     }
 
