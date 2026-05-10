@@ -430,41 +430,88 @@ function PanelRow({
     )
 }
 
+// SuccessContent - the closing beat of a successful agent run. JOBNUM is the
+// only piece of info that doesn't appear on the side panel (it's freshly
+// assigned by EAM at create time), so the bubble focuses on it: big mono
+// type, copy-to-clipboard, EAM's confirmation message. The other resolved
+// fields (org, equipment, problem code, type) are visible in the side panel
+// at the same time - duplicating them inside the bubble was redundant.
 function SuccessContent({ wr }: { wr: WorkRequestResult }) {
+    const [copied, setCopied] = useState(false)
+
+    async function handleCopy() {
+        try {
+            await navigator.clipboard.writeText(wr.jobNumber)
+            setCopied(true)
+            // Revert the label after a short window. If the user clicks again
+            // before this fires, the state is already true; the next timeout
+            // just resets it again - benign.
+            setTimeout(() => setCopied(false), 2000)
+        } catch {
+            // Clipboard API can fail on insecure contexts (non-https / non-
+            // localhost) or restricted browsers. Silent fallback: the user
+            // can still select-and-copy the JOBNUM text manually.
+        }
+    }
+
     return (
         <div>
-            <p className="text-sm text-slate-700">Work request filed in EAM ✅</p>
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <div className="flex items-center gap-3">
+                <span
+                    aria-hidden
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
+                >
+                    ✓
+                </span>
+                <p className="text-base font-semibold text-slate-900">
+                    Work request filed in EAM
+                </p>
+            </div>
+
+            <div className="mt-4 rounded-lg border-2 border-emerald-300 bg-linear-to-br from-emerald-50 to-white p-5">
                 <p className="text-xs uppercase tracking-wide text-emerald-700">
                     Job number
                 </p>
-                <p className="mt-1 font-mono text-2xl font-bold text-emerald-900">
-                    {wr.jobNumber}
-                </p>
+                <div className="mt-2 flex items-center gap-3">
+                    <p className="font-mono text-3xl font-bold text-emerald-900">
+                        {wr.jobNumber}
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => void handleCopy()}
+                        className="rounded-md border border-emerald-300 bg-white px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    >
+                        {copied ? "Copied!" : "Copy"}
+                    </button>
+                </div>
                 {wr.upstreamMessage && (
-                    <p className="mt-2 text-xs text-emerald-700">
+                    <p className="mt-3 text-xs text-emerald-700">
                         {wr.upstreamMessage}
                     </p>
                 )}
             </div>
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
-                <dt className="font-medium text-slate-700">Org</dt>
-                <dd>{wr.organizationCode}</dd>
-                <dt className="font-medium text-slate-700">Equipment</dt>
-                <dd className="font-mono">{wr.equipmentCode}</dd>
-                <dt className="font-medium text-slate-700">Problem</dt>
-                <dd>{wr.problemCode}</dd>
-                <dt className="font-medium text-slate-700">Type</dt>
-                <dd>{wr.typeCode}</dd>
-                <dt className="font-medium text-slate-700">Status</dt>
-                <dd>
-                    {wr.status.code} ({wr.status.description})
-                </dd>
-                <dt className="font-medium text-slate-700">Filed by</dt>
-                <dd className="font-mono">{wr.requestedBy}</dd>
-            </dl>
+
+            <p className="mt-3 text-xs text-slate-500">
+                Filed by{" "}
+                <span className="font-mono text-slate-700">{wr.requestedBy}</span>{" "}
+                at {formatCreatedAt(wr.createdAt)}
+            </p>
         </div>
     )
+}
+
+// formatCreatedAt - friendly absolute timestamp from an ISO-8601 string.
+// Locale-aware (toLocaleString respects the user's browser settings) and
+// guards against malformed input by falling back to the raw string.
+function formatCreatedAt(iso: string): string {
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return iso
+    return date.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    })
 }
 
 function FailContent({
