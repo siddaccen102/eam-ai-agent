@@ -9,9 +9,9 @@ const envSchema = z.object({
     WORKDAY_BASE_URL: z.string().url(),
     WORKDAY_API_TOKEN: z.string().min(1),
     EAM_BASE_URL: z.string().url(),
+    EAM_API_KEY: z.string().min(1),
     EAM_TENANT: z.string().min(1).default("VOPAKNV_DEV"),
-    EAM_ROLE: z.string().min(1).default("*"),
-    EAM_ORGANIZATION: z.string().min(1).default("VTAL"),
+    EAM_ORGANIZATION: z.string().min(1).default("*"),
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default("gpt-4o-mini"),
     WORKDAY_MODE: z.enum(["mock", "live"]).default("mock")

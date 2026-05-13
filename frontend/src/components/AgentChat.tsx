@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react"
+import { FormEvent, useEffect, useRef, useState } from "react"
 import { useSession } from "../auth/useSession"
 import { runAgent } from "../api/agent"
 import { fetchEquipmentPage } from "../api/equipment"
@@ -79,6 +79,17 @@ export function AgentChat() {
     const showInitialForm = transcript.length === 0
     const resolved = lastBotResult?.resolved ?? {}
     const correlationId = lastBotResult?.correlationId
+
+    // Autoscroll to the bottom on (a) new turn appended (transcript grows) or
+    // (b) pending flips true (PendingBubble appears). Fires after the DOM
+    // updates, so scrollIntoView lands on the latest content. Always-scroll
+    // (instead of "scroll only if user is already at the bottom") is the right
+    // shape for our short, ephemeral chat - longer running chats would want
+    // the smarter behavior.
+    const bottomRef = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+    }, [transcript.length, pending])
 
     async function handleStart(e: FormEvent<HTMLFormElement>) {
         e.preventDefault()
@@ -174,6 +185,10 @@ export function AgentChat() {
                         onReset={handleReset}
                     />
                 )}
+
+                {/* Autoscroll target. aria-hidden because it has no semantic
+                    content - it's an anchor for scrollIntoView. */}
+                <div ref={bottomRef} aria-hidden />
             </div>
 
             <aside className="lg:sticky lg:top-6 lg:self-start">
@@ -181,6 +196,7 @@ export function AgentChat() {
                     session={session}
                     resolved={resolved}
                     correlationId={correlationId}
+                    pending={pending}
                 />
             </aside>
         </div>
@@ -335,16 +351,25 @@ function ResolvedPanel({
     session,
     resolved,
     correlationId,
+    pending,
 }: {
     session: Session
     resolved: AgentRunResolved
     correlationId?: string
+    pending: boolean
 }) {
     return (
         <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Run state
-            </h2>
+            <div className="flex items-baseline gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Run state
+                </h2>
+                {pending && (
+                    <span className="text-xs italic text-slate-400">
+                        Working…
+                    </span>
+                )}
+            </div>
             <dl className="mt-4 space-y-3">
                 <PanelRow
                     label="User"
@@ -377,12 +402,44 @@ function ResolvedPanel({
                     secondary={resolved.type?.description}
                 />
             </dl>
-            {correlationId && (
-                <p className="mt-4 border-t border-slate-100 pt-3 font-mono text-xs text-slate-400 break-all">
-                    cid {correlationId}
-                </p>
-            )}
+            {correlationId && <CopyableCid cid={correlationId} />}
         </aside>
+    )
+}
+
+// CopyableCid - the panel's correlationId footer made click-to-copy. Same
+// "navigator.clipboard + 2-second 'Copied!' label" pattern as the JOBNUM Copy
+// button in SuccessContent, but presented as a plain text line that just
+// happens to be clickable - the affordance reveals on hover (cursor + color
+// shift + tooltip) so the panel stays uncluttered when the user isn't
+// actively trying to grab the cid.
+function CopyableCid({ cid }: { cid: string }) {
+    const [copied, setCopied] = useState(false)
+    async function handleCopy() {
+        try {
+            await navigator.clipboard.writeText(cid)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+        } catch {
+            // Older browsers / insecure contexts. Silent fallback.
+        }
+    }
+    return (
+        <div className="mt-4 border-t border-slate-100 pt-3">
+            <button
+                type="button"
+                onClick={() => void handleCopy()}
+                title="Copy correlation ID"
+                className="w-full cursor-pointer rounded text-left font-mono text-xs text-slate-400 break-all transition-colors hover:text-slate-700 focus:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20"
+            >
+                cid {cid}
+                {copied && (
+                    <span className="ml-2 font-sans font-medium text-emerald-600">
+                        Copied!
+                    </span>
+                )}
+            </button>
+        </div>
     )
 }
 
@@ -653,6 +710,11 @@ function PickEquipment({
     const [loadingMore, setLoadingMore] = useState(false)
     const [loadError, setLoadError] = useState<string | null>(null)
     const [query, setQuery] = useState("")
+    // Track how many pages the user has actually loaded. Initial page = 1; each
+    // successful Load more increments. Used to gate the "All loaded" hint -
+    // if EAM exhausted on the first page (small org), the user never saw a
+    // Load more button, so showing "All loaded" would be redundant.
+    const [pagesLoaded, setPagesLoaded] = useState(1)
 
     async function handleLoadMore() {
         if (!session || cursor === null || loadingMore) return
@@ -662,6 +724,7 @@ function PickEquipment({
             const page = await fetchEquipmentPage(orgCode, cursor, session.sessionId)
             setCandidates((prev) => [...prev, ...page.records])
             setCursor(page.nextCursor)
+            setPagesLoaded((p) => p + 1)
         } catch (err) {
             const message =
                 err instanceof ApiError ? err.message : "Network or unexpected error"
@@ -733,6 +796,11 @@ function PickEquipment({
                 >
                     {loadingMore ? "Loading…" : "Load more"}
                 </button>
+            )}
+            {cursor === null && pagesLoaded > 1 && (
+                <p className="mt-3 text-center text-xs italic text-slate-400">
+                    All available equipment loaded.
+                </p>
             )}
             {loadError && (
                 <p

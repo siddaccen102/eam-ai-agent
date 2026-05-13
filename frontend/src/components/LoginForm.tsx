@@ -50,7 +50,8 @@ export function LoginForm() {
                             autoFocus
                             required
                             autoComplete="email"
-                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                            disabled={submitting}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
                         />
                     </label>
                     <label className="block">
@@ -63,7 +64,8 @@ export function LoginForm() {
                             onChange={(e) => setEamPassword(e.target.value)}
                             required
                             autoComplete="current-password"
-                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                            disabled={submitting}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-50 disabled:text-slate-500"
                         />
                     </label>
                 </div>

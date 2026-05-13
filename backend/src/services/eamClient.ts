@@ -107,11 +107,11 @@ function buildClient(): AxiosInstance {
         baseURL: env.EAM_BASE_URL,
         timeout: EAM_DEFAULT_TIMEOUT_MS,
         headers: {
-            Accept: "application/json",
+            "Accept": "application/json",
             "Content-Type": "application/json",
-            tenant: env.EAM_TENANT,
-            role: env.EAM_ROLE,
-            organization: env.EAM_ORGANIZATION
+            "x-api-key": env.EAM_API_KEY,
+            "tenant": env.EAM_TENANT,
+            "organization": env.EAM_ORGANIZATION
         }
     })
 
@@ -153,7 +153,7 @@ function buildClient(): AxiosInstance {
 export const eamClient: AxiosInstance = buildClient()
 
 console.log(
-    `[eam] adapter ready — base=${env.EAM_BASE_URL}  tenant=${env.EAM_TENANT}  org=${env.EAM_ORGANIZATION}  auth=per-user`
+    `[eam] adapter ready — base=${env.EAM_BASE_URL} tenant=${env.EAM_TENANT} org=${env.EAM_ORGANIZATION}`
 )
 
 
