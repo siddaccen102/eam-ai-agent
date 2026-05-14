@@ -10,7 +10,6 @@ import {
     WorkRequestTypeOption,
 } from "../types/canonical"
 import {
-    EamCallAuth,
     createEamWorkRequest,
     findEamEquipmentByCode,
     getEamEquipmentForOrg,
@@ -40,11 +39,6 @@ import { IntegrationError } from "../errors/integrationError"
 //   - The discriminated union return type already encodes the state machine;
 //     a class would just wrap the same thing in `this.state`.
 //
-// Why auth threads through here instead of letting each stage fetch its own:
-//   - The orchestrator is the trust boundary. Routes hand it the session;
-//     it's the orchestrator's job to thread that session through every EAM
-//     call. Stages don't know about Express, requests, or middleware.
-//
 // Error mapping policy:
 //   - DOMAIN failures (user not found, no org access, AI no-match) -> map
 //     to typed `fail` reasons in AgentRunResult. Frontend renders a friendly
@@ -56,7 +50,6 @@ import { IntegrationError } from "../errors/integrationError"
 //   in the same UI flow as "service degraded" - wrong granularity.
 export async function runAgent(
     input: AgentRunInput,
-    auth: EamCallAuth,
 ): Promise<AgentRunResult> {
     // correlationId: one ID per user-facing run; stitches every log line +
     // the response envelope together. Distinct from the per-outbound-call
@@ -117,7 +110,7 @@ export async function runAgent(
     //   (b) accuracy - the OrganizationOption description isn't carried on
     //       re-entry, so we'd have to lie (code-as-description) without
     //       refetching. The list is small (typically <50 records).
-    const orgList = await getEamUserOrganizations(auth)
+    const orgList = await getEamUserOrganizations()
     if (orgList.records.length === 0) {
         return {
             kind: "fail",
@@ -192,7 +185,6 @@ export async function runAgent(
         const found = await findEamEquipmentByCode(
             organization.code,
             input.equipmentCode,
-            auth,
         )
         if (!found) {
             console.log(
@@ -211,7 +203,7 @@ export async function runAgent(
             `[agent] cid=${correlationId} stage=2 outcome=preresolved_equipment code=${equipment.equipmentCode}`
         )
     } else {
-        const page = await getEamEquipmentForOrg(organization.code, auth, {
+        const page = await getEamEquipmentForOrg(organization.code, {
             cursor: 0,
             pageSize: 50,
         })
@@ -335,9 +327,8 @@ export async function runAgent(
             typeCode: workRequestType.code,
             typeDescription: workRequestType.description,
             description: input.description,
-            requestedBy: auth.username,
+            requestedBy: input.email.split("@")[0].toUpperCase(),
         },
-        auth,
     )
 
     console.log(`[agent] cid=${correlationId} stage=5 outcome=success jobNumber=${workRequest.jobNumber}`)

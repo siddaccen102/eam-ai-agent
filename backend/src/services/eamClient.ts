@@ -97,11 +97,8 @@ function normalizeAxiosError(error: AxiosError): IntegrationError {
 
 // build and export the client
 //
-// NOTE: deliberately NO instance-level `auth` config. axios v1+ has a precedence
-// quirk where instance auth in axios.create() gets re-applied during request
-// prep and clobbers any per-request `Authorization` header. We bypass the issue
-// by never setting auth on the instance and requiring every helper to receive
-// EamCallAuth, which is rendered into an explicit Authorization header below.
+// The x-api-key header is set at instance level here. Every outbound EAM call
+// inherits it automatically — no per-request credential injection needed.
 function buildClient(): AxiosInstance {
     const instance = axios.create({
         baseURL: env.EAM_BASE_URL,
@@ -157,69 +154,37 @@ console.log(
 )
 
 
-// Per-request EAM credentials, sourced from the caller's session (AuthContext).
-// We render these into an explicit `Authorization: Basic <encoded>` header on
-// every request rather than relying on axios's `auth` config, because axios
-// v1+ instance-level auth (when set in axios.create) gets re-applied during
-// request prep and clobbers per-request Authorization headers - which is
-// exactly the precedence bug that produced false-positive logins. Building
-// the header ourselves keeps the auth contract obvious and testable.
-//
-// Required (not optional). The instance has no auth fallback by design, so
-// every EAM call needs creds from a real session - no shared service account.
-export type EamCallAuth = { username: string; password: string }
-
-function buildBasicAuthHeader(auth: EamCallAuth): string {
-    const encoded = Buffer.from(`${auth.username}:${auth.password}`).toString("base64")
-    return `Basic ${encoded}`
-}
-
-function withAuthHeader(
-    headers: Record<string, string> | undefined,
-    auth: EamCallAuth,
-): Record<string, string> {
-    return { ...(headers ?? {}), Authorization: buildBasicAuthHeader(auth) }
-}
-
 // getEam helper - GET wrapper that returns response.data so routes don't unwrap manually.
-// `auth` is required - routes get it from req.auth.eamAuth (populated by requireAuth).
 // Optional `headers` overrides instance-level defaults for this call only.
 export async function getEam<T = unknown>(
     path: string,
-    auth: EamCallAuth,
     params?: Record<string, unknown>,
     headers?: Record<string, string>,
 ): Promise<T> {
     const res = await eamClient.get<T>(path, {
-        params,
-        headers: withAuthHeader(headers, auth),
+        params
     })
     return res.data
 }
 
 // postEam helper - POST wrapper with separate body (B) and response generics (T).
-// `auth` is required.
 export async function postEam<T = unknown, B = unknown>(
     path: string,
-    body: B,
-    auth: EamCallAuth,
+    body: B
 ): Promise<T> {
-    const res = await eamClient.post<T>(path, body, {
-        headers: withAuthHeader(undefined, auth),
-    })
+    const res = await eamClient.post<T>(path, body)
     return res.data
 }
 
 // getEamCollection - GET wrapper that unwraps EAM's Result.ResultData envelope.
 // Returns clean { records, total, cursor, entityName } regardless of upstream quirks.
-// `auth` is required; `headers` is forwarded to getEam for per-call overrides.
+// `headers` is forwarded to getEam for per-call overrides.
 export async function getEamCollection<T = unknown>(
     path: string,
-    auth: EamCallAuth,
     params?: Record<string, unknown>,
     headers?: Record<string, string>,
 ): Promise<EamCollection<T>> {
-    const raw = await getEam<EamCollectionResponse<T>>(path, auth, params, headers)
+    const raw = await getEam<EamCollectionResponse<T>>(path, params, headers)
 
     // Defensive: throw a contract error if EAM returns a malformed envelope.
     if (!raw?.Result?.ResultData?.DATARECORD) {
@@ -261,18 +226,17 @@ export async function getEamCollection<T = unknown>(
 // resolvable across all orgs (the env-default `organization: VTAT` would scope
 // the lookup itself to VTAT and miss the user's other grants). We pass the
 // override per-call rather than mutating the instance default.
-export async function getEamUserOrganizations(auth: EamCallAuth): Promise<{
+export async function getEamUserOrganizations(): Promise<{
     records: OrganizationOption[]
     total: number
 }> {
     // EAM treats the username as the {parentid} path segment. Encoding is a
     // belt-and-suspenders measure - real EAM usernames are typically alphanumeric
     // with dots, but encoding protects against any future shape change.
-    const path = `/usersetup/${encodeURIComponent(auth.username)}/organizations`
+    const path = `/usersetup/RASHID.SIDDIQUI/organizations`
 
     const page = await getEamCollection<EamUserOrganizationRaw>(
         path,
-        auth,
         undefined,
         { organization: "*" },
     )
@@ -332,7 +296,6 @@ const EAM_EQUIPMENT_DEFAULT_PAGE_SIZE = 50
 // cap are still useful as a safety net.
 export async function getEamEquipmentForOrg(
     orgCode: string,
-    auth: EamCallAuth,
     opts?: { cursor?: number; pageSize?: number; activeOnly?: boolean }
 ): Promise<{
     records: EquipmentOption[]
@@ -373,7 +336,6 @@ export async function getEamEquipmentForOrg(
 
         const collection = await getEamCollection<EamPositionRaw>(
             "/positions",
-            auth,
             undefined,
             headers,
         )
@@ -448,13 +410,12 @@ export async function getEamEquipmentForOrg(
 export async function findEamEquipmentByCode(
     orgCode: string,
     equipmentCode: string,
-    auth: EamCallAuth,
 ): Promise<EquipmentOption | null> {
     const OUTER_CAP = 20
     let cursor = 0
 
     for (let i = 0; i < OUTER_CAP; i++) {
-        const page = await getEamEquipmentForOrg(orgCode, auth, {
+        const page = await getEamEquipmentForOrg(orgCode, {
             cursor,
             pageSize: 50,
         })
@@ -476,7 +437,7 @@ export async function findEamEquipmentByCode(
 //   1) shape/length validation,
 //   2) resolving problem-code description from findProblemCode(),
 //   3) resolving type description from findWorkRequestType(),
-//   4) sourcing requestedBy from req.auth.eamAuth.username (NEVER from the body).
+//   4) sourcing requestedBy from the caller's email (derived as email.split("@")[0].toUpperCase()).
 // This helper only sees enriched, vetted args. That keeps "unknown problem code"
 // errors out of the IntegrationError path: they surface as 400 VALIDATION_ERROR
 // at the route, not 502 UPSTREAM_ERROR from a confused EAM.
@@ -502,8 +463,7 @@ export async function createEamWorkRequest(
         typeDescription: string
         description: string
         requestedBy: string
-    },
-    auth: EamCallAuth,
+    }
 ): Promise<WorkRequestResult> {
     const body = toEamWorkOrderRequestBody(args)
 
@@ -514,7 +474,6 @@ export async function createEamWorkRequest(
     const response = await eamClient.post<EamWorkOrderCreateResponseRaw>(
         "/workorders",
         body,
-        { headers: withAuthHeader({ organization: "*" }, auth) },
     )
 
     return toWorkRequestResult(response.data, args)

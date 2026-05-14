@@ -18,7 +18,6 @@ router.get("/smoke/assets", requireAuth, async (req: Request, res: Response) => 
     try {
         const collection = await getEamCollection<EamAssetRaw>(
             "/assets",
-            req.auth!.eamAuth,
             req.query as Record<string, unknown>
         )
         const records = collection.records.map(toEquipmentOption)
@@ -50,7 +49,7 @@ router.get("/smoke/assets", requireAuth, async (req: Request, res: Response) => 
 // Protected: per-user EAM creds drive the call (no shared service account).
 router.get("/smoke/organizations", requireAuth, async (req: Request, res: Response) =>{
     try {
-        const result = await getEamUserOrganizations(req.auth!.eamAuth)
+        const result = await getEamUserOrganizations()
         return res.send({
             status: "ok",
             provider: "eam",
@@ -97,7 +96,7 @@ router.get("/smoke/equipment-for", requireAuth, async (req: Request, res: Respon
     try {
         // requireAuth guarantees req.auth is set; the ! tells TS what
         // the middleware contract already promises at runtime.
-        const result = await getEamEquipmentForOrg(orgCode, req.auth!.eamAuth, {
+        const result = await getEamEquipmentForOrg(orgCode, {
             cursor,
             pageSize,
             activeOnly: !includeInactive,
@@ -140,7 +139,6 @@ router.get("/smoke/positions-raw", requireAuth, async (req: Request, res: Respon
 
         const collection = await getEamCollection<EamPositionRaw>(
             "/positions",
-            req.auth!.eamAuth,
             undefined,
             headers
         )
@@ -304,7 +302,6 @@ router.post("/smoke/work-request", requireAuth, async (req: Request, res: Respon
                 // Source-of-truth for "who is creating this": session, not body.
                 requestedBy: req.auth!.eamAuth.username,
             },
-            req.auth!.eamAuth,
         )
         return res.send({
             status: "ok",

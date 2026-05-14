@@ -51,7 +51,7 @@ router.get("/smoke/match-org", requireAuth, async (req: Request, res: Response) 
 
     try {
         const user = await getWorkdayUserByEmail(email)
-        const orgList = await getEamUserOrganizations(req.auth!.eamAuth)
+        const orgList = await getEamUserOrganizations()
         const resolution = await resolveOrg(user, orgList.records)
         return res.send({
             status: "ok",

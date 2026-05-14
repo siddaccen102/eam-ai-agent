@@ -87,7 +87,7 @@ router.post("/run", requireAuth, async (req: Request, res: Response) => {
     )
 
     try {
-        const result = await runAgent(input, req.auth!.eamAuth)
+        const result = await runAgent(input)
         console.log(
             `[agent.route] exit cid=${result.correlationId} outcome=${result.kind} duration_ms=${Date.now() - startedAt}`
         )
