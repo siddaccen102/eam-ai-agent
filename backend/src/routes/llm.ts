@@ -3,7 +3,6 @@ import { chatComplete } from "../services/llmClient"
 import { getWorkdayUserByEmail } from "../services/workdayClient"
 import { getEamUserOrganizations } from "../services/eamClient"
 import { resolveOrg } from "../services/orgMatcher"
-import { requireAuth } from "../middleware/requireAuth"
 import {
     IntegrationError,
     integrationErrorHttpStatus
@@ -40,7 +39,7 @@ router.get("/smoke", async (req: Request, res: Response) => {
 // GET /smoke/match-org?email=leticia.sales@vopak.com
 // Showcase: Workday user lookup -> EAM org list -> AI match -> typed OrgResolution.
 // Protected: per-user EAM creds drive the org-list fetch (no shared service account).
-router.get("/smoke/match-org", requireAuth, async (req: Request, res: Response) => {
+router.get("/smoke/match-org", async (req: Request, res: Response) => {
     const email = typeof req.query.email === "string" ? req.query.email : undefined
     if (!email) {
         return res.status(400).send({

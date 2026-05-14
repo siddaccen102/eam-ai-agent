@@ -7,14 +7,12 @@ import {
     IntegrationError,
     integrationErrorHttpStatus
 } from "../errors/integrationError"
-import { requireAuth } from "../middleware/requireAuth"
 
 const router = Router()
 
 // GET /smoke/assets[?<any-eam-supported-param>]
 // Returns canonical EquipmentOption[] - vendor-free, frontend-ready.
-// Protected: per-user EAM creds drive the call (no shared service account).
-router.get("/smoke/assets", requireAuth, async (req: Request, res: Response) => {
+router.get("/smoke/assets", async (req: Request, res: Response) => {
     try {
         const collection = await getEamCollection<EamAssetRaw>(
             "/assets",
@@ -44,10 +42,9 @@ router.get("/smoke/assets", requireAuth, async (req: Request, res: Response) => 
 
 
 // GET /smoke/organizations
-// Returns the orgs the authenticated user has access to in EAM (not the
-// global org catalog). The "*" wildcard is filtered out by the helper.
-// Protected: per-user EAM creds drive the call (no shared service account).
-router.get("/smoke/organizations", requireAuth, async (req: Request, res: Response) =>{
+// Returns the orgs accessible in EAM for this API key. The "*" wildcard is
+// filtered out by the helper.
+router.get("/smoke/organizations", async (req: Request, res: Response) =>{
     try {
         const result = await getEamUserOrganizations()
         return res.send({
@@ -71,11 +68,7 @@ router.get("/smoke/organizations", requireAuth, async (req: Request, res: Respon
 // EAM's cursorposition. Active-only by default; opt in to inactive equipment
 // with includeInactive=1. Pass nextCursor from a prior response back as
 // cursor=N to fetch the next page.
-//
-// Protected: the requireAuth middleware enforces a valid session and attaches
-// req.auth. The helper uses req.auth.eamAuth so EAM scopes the response to
-// the logged-in user's org access, not the env-default integration user.
-router.get("/smoke/equipment-for", requireAuth, async (req: Request, res: Response) => {
+router.get("/smoke/equipment-for", async (req: Request, res: Response) => {
     const orgCode = typeof req.query.orgCode === "string" ? req.query.orgCode : undefined
     if (!orgCode) {
         return res.status(400).send({
@@ -94,8 +87,6 @@ router.get("/smoke/equipment-for", requireAuth, async (req: Request, res: Respon
     const includeInactive = req.query.includeInactive === "1"
 
     try {
-        // requireAuth guarantees req.auth is set; the ! tells TS what
-        // the middleware contract already promises at runtime.
         const result = await getEamEquipmentForOrg(orgCode, {
             cursor,
             pageSize,
@@ -128,8 +119,7 @@ router.get("/smoke/equipment-for", requireAuth, async (req: Request, res: Respon
 //      header (VTAT records are sparse in this stream),
 //   3) the "empty records" responses from /smoke/equipment-for are a filter
 //      effect, not a connectivity bug.
-// Protected: per-user EAM creds drive the call (no shared service account).
-router.get("/smoke/positions-raw", requireAuth, async (req: Request, res: Response) => {
+router.get("/smoke/positions-raw", async (req: Request, res: Response) => {
     const cursorRaw = typeof req.query.cursor === "string" ? Number(req.query.cursor) : 0
     const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 0 ? cursorRaw : 0
 
@@ -188,10 +178,8 @@ router.get("/smoke/positions-raw", requireAuth, async (req: Request, res: Respon
 // honest shape. If EAM later exposes a tenant-scoped problem-code endpoint
 // we swap the service implementation; the route stays unchanged.
 //
-// Gated with requireAuth for consistency with the rest of the API surface
-// (the actual work-request flow requires login anyway). No EAM round-trip,
-// so the response is instant and there's no upstream-error path to handle.
-router.get("/smoke/problem-codes", requireAuth, async (_req: Request, res: Response) => {
+// No EAM round-trip, so the response is instant and there's no upstream-error path to handle.
+router.get("/smoke/problem-codes", async (_req: Request, res: Response) => {
     const records = getProblemCodes()
     return res.send({
         status: "ok",
@@ -205,7 +193,7 @@ router.get("/smoke/problem-codes", requireAuth, async (_req: Request, res: Respo
 // Same static-lookup pattern as /smoke/problem-codes; backed by
 // services/workRequestTypes.ts mirrored from docs/Work Request Type.xlsx.
 // Frontend uses this to populate the "type" dropdown on the work-request form.
-router.get("/smoke/work-request-types", requireAuth, async (_req: Request, res: Response) => {
+router.get("/smoke/work-request-types", async (_req: Request, res: Response) => {
     const records = getWorkRequestTypes()
     return res.send({
         status: "ok",
@@ -216,22 +204,22 @@ router.get("/smoke/work-request-types", requireAuth, async (_req: Request, res: 
 })
 
 // POST /smoke/work-request
-// First write endpoint in the project. Validates the canonical input shape,
-// resolves descriptions for problem code + type from the static lookups,
-// injects requestedBy from the session (NEVER from the body), and forwards
-// to EAM via createEamWorkRequest. EAM-assigned JOBNUM comes back in the
-// canonical WorkRequestResult.
+// Validates the canonical input shape, resolves descriptions for problem code
+// + type from static lookups, derives requestedBy from the email field, and
+// forwards to EAM via createEamWorkRequest. EAM-assigned JOBNUM comes back
+// in the canonical WorkRequestResult.
 //
 // Validation deliberately lives in this route (not in a shared validator
 // module) - it's small enough that abstracting it would just hide what the
 // rules actually are. If we add more write routes later we'll factor it.
 const MAX_DESCRIPTION_LEN = 200
 
-router.post("/smoke/work-request", requireAuth, async (req: Request, res: Response) => {
+router.post("/smoke/work-request", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>
 
     // String-or-default-empty pattern (vs. type-narrowing helpers): keeps the
     // missing-field 400s simple to construct without a per-field utility.
+    const email = typeof body.email === "string" ? body.email.trim() : ""
     const organizationCode = typeof body.organizationCode === "string" ? body.organizationCode.trim() : ""
     const equipmentCode = typeof body.equipmentCode === "string" ? body.equipmentCode.trim() : ""
     const departmentCode = typeof body.departmentCode === "string" ? body.departmentCode.trim() : ""
@@ -247,6 +235,7 @@ router.post("/smoke/work-request", requireAuth, async (req: Request, res: Respon
     // short-circuiting on the first - a frontend will get one round-trip's
     // worth of feedback instead of N round-trips for N missing fields.
     const missing: string[] = []
+    if (!email) missing.push("email")
     if (!organizationCode) missing.push("organizationCode")
     if (!equipmentCode) missing.push("equipmentCode")
     if (!departmentCode) missing.push("departmentCode")
@@ -299,8 +288,7 @@ router.post("/smoke/work-request", requireAuth, async (req: Request, res: Respon
                 typeCode,
                 typeDescription: wrType.description,
                 description,
-                // Source-of-truth for "who is creating this": session, not body.
-                requestedBy: req.auth!.eamAuth.username,
+                requestedBy: email.split("@")[0].toUpperCase(),
             },
         )
         return res.send({

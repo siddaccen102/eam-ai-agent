@@ -1,5 +1,4 @@
 import { Router, Request, Response } from "express"
-import { requireAuth } from "../middleware/requireAuth"
 import { runAgent } from "../services/agentOrchestrator"
 import { AgentRunInput } from "../types/canonical"
 import {
@@ -27,7 +26,7 @@ const MAX_DESCRIPTION_LEN = 200
 //   the rules are direct, and abstracting them would just hide what's
 //   actually being checked. We'll factor when there are 3+ write routes
 //   with overlapping shapes.
-router.post("/run", requireAuth, async (req: Request, res: Response) => {
+router.post("/run", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>
 
     const email = typeof body.email === "string" ? body.email.trim() : ""
